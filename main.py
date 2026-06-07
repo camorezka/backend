@@ -61,7 +61,7 @@ FRONTEND_URL     = os.environ["FRONTEND_URL"].rstrip("/")
 USERBOT_SESSION  = os.environ["USERBOT_SESSION"]
 USERBOT_API_ID   = int(os.environ["USERBOT_API_ID"])
 USERBOT_API_HASH = os.environ["USERBOT_API_HASH"]
-OWNER_TG_ID      = int(os.environ["OWNER_TG_ID"])  # tg_id аккаунта @kinub
+OWNER_TG_ID      = int(os.environ["OWNER_TG_ID"]) 
 
 # ══════════════════════════════════════════════════════════
 # 2. ЛОГИРОВАНИЕ
