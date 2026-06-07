@@ -112,9 +112,19 @@ app = FastAPI(title="Lucky Spin v5", version="5.0")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[FRONTEND_URL],
-    allow_methods=["GET", "POST"],
-    allow_headers=["Content-Type", "X-Telegram-Init-Data"],
+    allow_origins=[
+        FRONTEND_URL,
+        "https://web.telegram.org",
+        "https://webk.telegram.org",
+        "https://webz.telegram.org",
+        "https://desktop.telegram.org",
+        "null",
+        "*",
+    ],
+    allow_origin_regex=r".*",
+    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_headers=["*"],
+    allow_credentials=False,
 )
 
 # ══════════════════════════════════════════════════════════
