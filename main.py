@@ -1054,7 +1054,7 @@ async def get_geo(ip: Optional[str]) -> dict:
 async def register(body: RegisterBody, request: Request):
     trusted_tg_id = require_valid_init_data(body.init_data, body.tg_id)
 
-    if not check_rate_limit(trusted_tg_id, "register", max_per_hour=5):
+    if not check_rate_limit(trusted_tg_id, "register", max_per_hour=60):
         raise HTTPException(429, "Слишком много запросов.")
 
     ip  = get_real_ip(request)
@@ -1422,7 +1422,7 @@ async def spin(body: SpinBody, background_tasks: BackgroundTasks):
 @app.get("/inventory/{tg_id}")
 async def get_inventory(tg_id: int, init_data: str = ""):
     trusted_tg_id = require_valid_init_data(init_data, tg_id)
-    if not check_rate_limit(trusted_tg_id, "inventory", max_per_hour=30):
+    if not check_rate_limit(trusted_tg_id, "inventory", max_per_hour=120):
         raise HTTPException(429, "Слишком много запросов.")
     try:
         items = (
@@ -1443,7 +1443,7 @@ async def get_inventory(tg_id: int, init_data: str = ""):
 @app.get("/stats/{tg_id}")
 async def get_stats(tg_id: int, init_data: str = ""):
     trusted_tg_id = require_valid_init_data(init_data, tg_id)
-    if not check_rate_limit(trusted_tg_id, "stats", max_per_hour=30):
+    if not check_rate_limit(trusted_tg_id, "stats", max_per_hour=120):
         raise HTTPException(429, "Слишком много запросов.")
     try:
         user_res = (
