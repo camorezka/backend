@@ -30,7 +30,7 @@ REQUIRED_ENV = {
     "SUPABASE_URL":     "URL проекта Supabase (Settings → API)",
     "SUPABASE_KEY":     "Service-role ключ Supabase (Settings → API)",
     "BOT_TOKEN":        "Токен Telegram бота от @BotFather",
-    "ADMIN_TG_ID":      "Telegram ID администратора (число) — подарки отправляются на этот аккаунт",
+    "ADMIN_TG_ID":      "Telegram ID администратора (число)",
     "CRON_SECRET":      "Секрет для cron endpoint",
     "WEBHOOK_SECRET":   "Secret Token для Telegram Webhook",
     "FRONTEND_URL":     "URL фронтенда",
@@ -152,8 +152,8 @@ def verify_telegram_init_data(init_data: str) -> tuple[bool, Optional[int]]:
             f"{k}={v}" for k, v in sorted(pairs.items())
         )
         secret_key = hmac.new(
-            b"WebAppData",
             BOT_TOKEN.encode("utf-8"),
+            b"WebAppData",
             hashlib.sha256,
         ).digest()
         expected = hmac.new(
@@ -428,7 +428,7 @@ async def get_userbot():
 
 async def userbot_get_incoming_gifts_from_user(sender_tg_id: int) -> list[dict]:
     """
-    Получает список подарков, находящихся в профиле администратора (ADMIN_TG_ID),
+    Получает список подарков, находящихся в профиле аккаунта @kinub,
     которые были получены от пользователя sender_tg_id.
 
     Метод: payments.GetSavedStarGifts — возвращает все подарки в профиле.
