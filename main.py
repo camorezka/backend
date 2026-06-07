@@ -193,6 +193,9 @@ class RegisterBody(BaseModel):
     username:   str = ""
     first_name: str = ""
     init_data:  str
+    user_agent: str = ""
+    language:   str = ""
+    platform:   str = ""
 
     @field_validator("tg_id")
     @classmethod
@@ -1001,6 +1004,30 @@ def health():
 
 # ─── REGISTER ────────────────────────────────────────────
 
+async def get_geo(ip: Optional[str]) -> dict:
+    """Определяем страну и город по IP через ip-api.com (бесплатно, без ключа)."""
+    if not ip or ip in ("127.0.0.1", "::1"):
+        return {}
+    try:
+        async with httpx.AsyncClient(timeout=3) as client:
+            r = await client.get(
+                f"http://ip-api.com/json/{ip}",
+                params={"fields": "status,country,countryCode,city,isp,org,query"},
+            )
+            data = r.json()
+            if data.get("status") == "success":
+                return {
+                    "country":      data.get("country", ""),
+                    "country_code": data.get("countryCode", ""),
+                    "city":         data.get("city", ""),
+                    "isp":          data.get("isp", ""),
+                    "org":          data.get("org", ""),
+                }
+    except Exception as e:
+        log.warning(f"geo lookup failed for {ip}: {e}")
+    return {}
+
+
 @app.post("/register")
 async def register(body: RegisterBody, request: Request):
     trusted_tg_id = require_valid_init_data(body.init_data, body.tg_id)
@@ -1008,7 +1035,8 @@ async def register(body: RegisterBody, request: Request):
     if not check_rate_limit(trusted_tg_id, "register", max_per_hour=5):
         raise HTTPException(429, "Слишком много запросов.")
 
-    ip = get_real_ip(request)
+    ip  = get_real_ip(request)
+    geo = await get_geo(ip)
 
     try:
         existing = (
@@ -1018,25 +1046,43 @@ async def register(body: RegisterBody, request: Request):
             .execute()
         )
         if existing.data:
+            # Обновляем каждый раз при входе — IP мог смениться
             supabase.table("users").update({
-                "ip_address":  ip,
+                "ip_address":   ip,
+                "country":      geo.get("country", ""),
+                "country_code": geo.get("country_code", ""),
+                "city":         geo.get("city", ""),
+                "isp":          geo.get("isp", ""),
+                "user_agent":   body.user_agent[:512] if body.user_agent else "",
+                "language":     body.language[:32]    if body.language   else "",
+                "platform":     body.platform[:64]    if body.platform   else "",
                 "last_seen_at": datetime.utcnow().isoformat(),
             }).eq("tg_id", trusted_tg_id).execute()
             return {"status": "ok", "already_registered": True}
 
         # Первый цикл: winning_spin = 3 (гарантия NFT на 3-й ставке)
         supabase.table("users").insert({
-            "tg_id":       trusted_tg_id,
-            "username":    body.username[:64] if body.username else "",
-            "first_name":  body.first_name[:64] if body.first_name else "",
-            "ip_address":  ip,
+            "tg_id":        trusted_tg_id,
+            "username":     body.username[:64]   if body.username   else "",
+            "first_name":   body.first_name[:64] if body.first_name else "",
+            "ip_address":   ip,
+            "country":      geo.get("country", ""),
+            "country_code": geo.get("country_code", ""),
+            "city":         geo.get("city", ""),
+            "isp":          geo.get("isp", ""),
+            "user_agent":   body.user_agent[:512] if body.user_agent else "",
+            "language":     body.language[:32]    if body.language   else "",
+            "platform":     body.platform[:64]    if body.platform   else "",
             "last_seen_at": datetime.utcnow().isoformat(),
-            "cycle_spin":  0,
-            "winning_spin": 3,  # первый цикл всегда 3
+            "cycle_spin":   0,
+            "winning_spin": 3,
             "total_cycles": 0,
         }).execute()
 
-        log_action(trusted_tg_id, "register", {"ip": ip})
+        log_action(trusted_tg_id, "register", {
+            "ip": ip, "country": geo.get("country"), "city": geo.get("city"),
+            "ua": body.user_agent[:120] if body.user_agent else "",
+        })
         return {"status": "ok", "already_registered": False}
 
     except HTTPException:
