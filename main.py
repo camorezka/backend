@@ -122,6 +122,7 @@ app.add_middleware(
         "https://webk.telegram.org",
         "https://webz.telegram.org",
         "https://desktop.telegram.org",
+        "null",  # Telegram Mini App шлёт Origin: null
     ],
     allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["*"],
@@ -1642,10 +1643,7 @@ async def webhook(
             ring_account = get_setting("ring_account", "@kinub")
             await tg_send_message(
                 tg_id,
-                f"🎰 <b>Lucky Spin</b>\n\n"
                 f"Открой мини-приложение, нажми «Крутить рулетку» "
-                f"и отправь 2 кольца на {ring_account}.\n\n"
-                f"✅ <b>Гарантия:</b> первый выигрыш на 3-й ставке!",
             )
 
     return {"ok": True}
