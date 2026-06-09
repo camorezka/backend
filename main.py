@@ -197,13 +197,28 @@ def verify_telegram_init_data(init_data: str) -> tuple[bool, Optional[int], str]
 
 
 def require_valid_init_data(init_data: str, claimed_tg_id: int) -> int:
+    """Строгая проверка — для финансовых операций (create_bet, spin, check_payment)."""
     is_valid, tg_id_from_data, reason = verify_telegram_init_data(init_data)
     log.info(f"[auth] tg_id={claimed_tg_id} valid={is_valid} reason={reason}")
     if is_valid and tg_id_from_data is not None:
         return int(tg_id_from_data)
-    # Подпись не прошла — блокируем запрос, никакого fallback
     log.warning(f"[auth] ОТКЛОНЕНО: подпись не прошла ({reason}), tg_id={claimed_tg_id}")
     raise HTTPException(403, f"Недействительная подпись Telegram: {reason}")
+
+
+def require_init_data_soft(init_data: str, claimed_tg_id: int) -> int:
+    """Мягкая проверка — для register/stats/inventory.
+    Если подпись валидна — берём tg_id из неё.
+    Если нет (устарела, локальный dev) — используем claimed_tg_id как fallback.
+    """
+    is_valid, tg_id_from_data, reason = verify_telegram_init_data(init_data)
+    log.info(f"[auth-soft] tg_id={claimed_tg_id} valid={is_valid} reason={reason}")
+    if is_valid and tg_id_from_data is not None:
+        return int(tg_id_from_data)
+    log.warning(f"[auth-soft] fallback tg_id={claimed_tg_id} reason={reason}")
+    if not claimed_tg_id or claimed_tg_id <= 0:
+        raise HTTPException(403, "tg_id не передан")
+    return int(claimed_tg_id)
 
 # ══════════════════════════════════════════════════════════
 # 6. PYDANTIC МОДЕЛИ
@@ -1055,7 +1070,7 @@ async def get_geo(ip: Optional[str]) -> dict:
 
 @app.post("/register")
 async def register(body: RegisterBody, request: Request):
-    trusted_tg_id = require_valid_init_data(body.init_data, body.tg_id)
+    trusted_tg_id = require_init_data_soft(body.init_data, body.tg_id)
 
     if not check_rate_limit(trusted_tg_id, "register", max_per_hour=60):
         raise HTTPException(429, "Слишком много запросов.")
@@ -1431,7 +1446,7 @@ async def spin(body: SpinBody, background_tasks: BackgroundTasks):
 
 @app.get("/inventory/{tg_id}")
 async def get_inventory(tg_id: int, init_data: str = ""):
-    trusted_tg_id = require_valid_init_data(init_data, tg_id)
+    trusted_tg_id = require_init_data_soft(init_data, tg_id)
     if not check_rate_limit(trusted_tg_id, "inventory", max_per_hour=120):
         raise HTTPException(429, "Слишком много запросов.")
     try:
@@ -1452,7 +1467,7 @@ async def get_inventory(tg_id: int, init_data: str = ""):
 
 @app.get("/stats/{tg_id}")
 async def get_stats(tg_id: int, init_data: str = ""):
-    trusted_tg_id = require_valid_init_data(init_data, tg_id)
+    trusted_tg_id = require_init_data_soft(init_data, tg_id)
     if not check_rate_limit(trusted_tg_id, "stats", max_per_hour=120):
         raise HTTPException(429, "Слишком много запросов.")
     try:
@@ -1643,7 +1658,7 @@ async def webhook(
             ring_account = get_setting("ring_account", "@kinub")
             await tg_send_message(
                 tg_id,
-                f"Открой мини-приложение, нажми «Крутить рулетку» "
+                f"Открой мини-приложение, и начинай свою игру!"
             )
 
     return {"ok": True}
