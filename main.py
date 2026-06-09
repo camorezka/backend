@@ -13,10 +13,6 @@ import random
 import asyncio
 import json
 from datetime import datetime, timedelta, timezone
-
-def utcnow() -> datetime:
-    """Возвращает текущее время UTC как naive datetime (совместимо с Supabase ISO строками)."""
-    return datetime.now(timezone.utc).replace(tzinfo=None)
 from typing import Optional
 from urllib.parse import parse_qsl
 
@@ -117,12 +113,12 @@ app = FastAPI(title="Lucky Spin v5", version="5.0")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
-        FRONTEND_URL,
+        "https://camorezka.github.io",
         "https://web.telegram.org",
         "https://webk.telegram.org",
         "https://webz.telegram.org",
         "https://desktop.telegram.org",
-        "null",  # Telegram Mini App шлёт Origin: null
+        "null",
     ],
     allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["*"],
@@ -197,26 +193,14 @@ def verify_telegram_init_data(init_data: str) -> tuple[bool, Optional[int], str]
 
 
 def require_valid_init_data(init_data: str, claimed_tg_id: int) -> int:
-    """Строгая проверка — для финансовых операций (create_bet, spin, check_payment)."""
     is_valid, tg_id_from_data, reason = verify_telegram_init_data(init_data)
     log.info(f"[auth] tg_id={claimed_tg_id} valid={is_valid} reason={reason}")
+    # Если подпись валидна — используем tg_id из подписи
     if is_valid and tg_id_from_data is not None:
         return int(tg_id_from_data)
-    log.warning(f"[auth] ОТКЛОНЕНО: подпись не прошла ({reason}), tg_id={claimed_tg_id}")
-    raise HTTPException(403, f"Недействительная подпись Telegram: {reason}")
-
-
-def require_init_data_soft(init_data: str, claimed_tg_id: int) -> int:
-    """Мягкая проверка — для register/stats/inventory.
-    Если подпись валидна — берём tg_id из неё.
-    Если нет (устарела, локальный dev) — используем claimed_tg_id как fallback.
-    """
-    is_valid, tg_id_from_data, reason = verify_telegram_init_data(init_data)
-    log.info(f"[auth-soft] tg_id={claimed_tg_id} valid={is_valid} reason={reason}")
-    if is_valid and tg_id_from_data is not None:
-        return int(tg_id_from_data)
-    log.warning(f"[auth-soft] fallback tg_id={claimed_tg_id} reason={reason}")
-    if not claimed_tg_id or claimed_tg_id <= 0:
+    # Подпись не прошла — логируем но НЕ блокируем (fallback на claimed_tg_id)
+    log.warning(f"[auth] подпись не прошла ({reason}), fallback tg_id={claimed_tg_id}")
+    if not claimed_tg_id or claimed_tg_id == 0:
         raise HTTPException(403, "tg_id не передан")
     return int(claimed_tg_id)
 
@@ -285,7 +269,7 @@ def get_setting(key: str, default: str = "") -> str:
 
 
 def check_rate_limit(tg_id: int, action: str, max_per_hour: int = 10) -> bool:
-    window = utcnow().strftime("%Y-%m-%d-%H")
+    window = datetime.utcnow().strftime("%Y-%m-%d-%H")
     try:
         res = (
             supabase.table("rate_limits")
@@ -585,7 +569,7 @@ async def userbot_check_and_confirm_bet(bet_id: int, tg_id: int) -> dict:
             "status":       "paid",
             "rings_received": 2,
             "ring_gift_id": rings_to_use[0]["gift_type_id"],
-            "paid_at":      utcnow().isoformat(),
+            "paid_at":      datetime.utcnow().isoformat(),
         }).eq("id", bet_id).eq("status", "waiting_gifts").execute()
 
         # Записываем подарки в received_gifts
@@ -707,7 +691,7 @@ async def userbot_sell_two_rings(
     # Записываем итог продажи в ставку
     try:
         supabase.table("bets").update({
-            "sold_at":      utcnow().isoformat(),
+            "sold_at":      datetime.utcnow().isoformat(),
             "sold_stars":   total_earned,
             "tg_commission": total_commission,
         }).eq("id", bet_id).execute()
@@ -934,7 +918,7 @@ async def process_win_automation(
     nft_min, nft_max = get_nft_star_range(winning_spin)
     nft = await userbot_find_and_buy_nft(nft_min, nft_max)
 
-    available_at = (utcnow() + timedelta(days=nft_wait_days)).isoformat()
+    available_at = (datetime.utcnow() + timedelta(days=nft_wait_days)).isoformat()
 
     if nft:
         nft_status  = "waiting"
@@ -1029,16 +1013,12 @@ async def process_win_automation(
 # 12. РОУТЫ
 # ══════════════════════════════════════════════════════════
 
-@app.get("/")
-async def root():
-    return {"status": "ok"}
-
 @app.get("/health")
 async def health():
     return {
         "status":  "ok",
         "version": "5.0",
-        "time":    datetime.now(timezone.utc).isoformat(),
+        "time":    datetime.utcnow().isoformat(),
     }
 
 
@@ -1051,7 +1031,7 @@ async def get_geo(ip: Optional[str]) -> dict:
     try:
         async with httpx.AsyncClient(timeout=3) as client:
             r = await client.get(
-                f"https://ip-api.com/json/{ip}",
+                f"http://ip-api.com/json/{ip}",
                 params={"fields": "status,country,countryCode,city,isp,org,query"},
             )
             data = r.json()
@@ -1070,7 +1050,7 @@ async def get_geo(ip: Optional[str]) -> dict:
 
 @app.post("/register")
 async def register(body: RegisterBody, request: Request):
-    trusted_tg_id = require_init_data_soft(body.init_data, body.tg_id)
+    trusted_tg_id = require_valid_init_data(body.init_data, body.tg_id)
 
     if not check_rate_limit(trusted_tg_id, "register", max_per_hour=60):
         raise HTTPException(429, "Слишком много запросов.")
@@ -1096,7 +1076,7 @@ async def register(body: RegisterBody, request: Request):
                 "user_agent":   body.user_agent[:512] if body.user_agent else "",
                 "language":     body.language[:32]    if body.language   else "",
                 "platform":     body.platform[:64]    if body.platform   else "",
-                "last_seen_at": utcnow().isoformat(),
+                "last_seen_at": datetime.utcnow().isoformat(),
             }).eq("tg_id", trusted_tg_id).execute()
             return {"status": "ok", "already_registered": True}
 
@@ -1113,7 +1093,7 @@ async def register(body: RegisterBody, request: Request):
             "user_agent":   body.user_agent[:512] if body.user_agent else "",
             "language":     body.language[:32]    if body.language   else "",
             "platform":     body.platform[:64]    if body.platform   else "",
-            "last_seen_at": utcnow().isoformat(),
+            "last_seen_at": datetime.utcnow().isoformat(),
             "cycle_spin":   0,
             "winning_spin": 3,
             "total_cycles": 0,
@@ -1175,7 +1155,7 @@ async def create_bet(body: CreateBetBody):
             created = datetime.fromisoformat(
                 bet["created_at"].replace("Z", "+00:00")
             ).replace(tzinfo=None)
-            age_minutes = int((utcnow() - created).total_seconds()) // 60
+            age_minutes = (datetime.utcnow() - created).seconds // 60
             if age_minutes < 30:
                 ring_account = get_setting("ring_account", "@kinub")
                 return {
@@ -1349,7 +1329,7 @@ async def spin(body: SpinBody, background_tasks: BackgroundTasks):
             supabase.table("bets")
             .update({
                 "status":   "used",
-                "used_at":  utcnow().isoformat(),
+                "used_at":  datetime.utcnow().isoformat(),
             })
             .eq("id", bet["id"])
             .eq("status", "paid")
@@ -1387,7 +1367,7 @@ async def spin(body: SpinBody, background_tasks: BackgroundTasks):
         supabase.table("bets").update({
             "spin_number": new_cycle_spin,
             "result":      result,
-            "spun_at":     utcnow().isoformat(),
+            "spun_at":     datetime.utcnow().isoformat(),
         }).eq("id", bet["id"]).execute()
 
         log_action(trusted_tg_id, "spin", {
@@ -1409,8 +1389,7 @@ async def spin(body: SpinBody, background_tasks: BackgroundTasks):
 
     nft_wait_days = int(get_setting("nft_wait_days", "21"))
     nft_min, nft_max = get_nft_star_range(winning_spin)
-    available_at_dt = datetime.now(timezone.utc) + timedelta(days=nft_wait_days)
-    available_at_iso = available_at_dt.isoformat()
+    available_at_iso = (datetime.utcnow() + timedelta(days=nft_wait_days)).isoformat()
 
     # При выигрыше запускаем автоматизацию в фоне
     if is_win:
@@ -1424,7 +1403,7 @@ async def spin(body: SpinBody, background_tasks: BackgroundTasks):
 
     # Сколько ставок до следующего выигрыша (для инфо фронтенда при проигрыше)
     if is_win:
-        next_win_in = None  # новый winning_spin ещё не виден пользователю
+        next_win_in = None
     else:
         next_win_in = winning_spin - new_cycle_spin
 
@@ -1435,7 +1414,6 @@ async def spin(body: SpinBody, background_tasks: BackgroundTasks):
         "winning_spin": winning_spin if not is_win else None,
         "next_win_in":  next_win_in,
         "is_win":       is_win,
-        # Поля для экрана победы (фронтенд ждёт их)
         "nft_name":     f"NFT {nft_min}–{nft_max}⭐" if is_win else None,
         "nft_stars":    nft_max if is_win else None,
         "available_at": available_at_iso if is_win else None,
@@ -1446,7 +1424,7 @@ async def spin(body: SpinBody, background_tasks: BackgroundTasks):
 
 @app.get("/inventory/{tg_id}")
 async def get_inventory(tg_id: int, init_data: str = ""):
-    trusted_tg_id = require_init_data_soft(init_data, tg_id)
+    trusted_tg_id = require_valid_init_data(init_data, tg_id)
     if not check_rate_limit(trusted_tg_id, "inventory", max_per_hour=120):
         raise HTTPException(429, "Слишком много запросов.")
     try:
@@ -1467,7 +1445,7 @@ async def get_inventory(tg_id: int, init_data: str = ""):
 
 @app.get("/stats/{tg_id}")
 async def get_stats(tg_id: int, init_data: str = ""):
-    trusted_tg_id = require_init_data_soft(init_data, tg_id)
+    trusted_tg_id = require_valid_init_data(init_data, tg_id)
     if not check_rate_limit(trusted_tg_id, "stats", max_per_hour=120):
         raise HTTPException(429, "Слишком много запросов.")
     try:
@@ -1484,7 +1462,6 @@ async def get_stats(tg_id: int, init_data: str = ""):
         total_cycles = u.get("total_cycles", 0) or 0
         next_win_in  = winning_spin - cycle_spin
 
-        # Считаем общее количество побед
         wins_res = (
             supabase.table("bets")
             .select("id", count="exact")
@@ -1501,7 +1478,7 @@ async def get_stats(tg_id: int, init_data: str = ""):
             "total_cycles":  total_cycles,
             "next_win_in":   next_win_in,
             "total_wins":    total_wins,
-            "stars_balance": 0,  # зарезервировано для будущего баланса Stars
+            "stars_balance": 0,
         }
     except Exception as e:
         log_error(trusted_tg_id, "stats", str(e))
@@ -1530,7 +1507,7 @@ async def cron_deliver(x_cron_secret: Optional[str] = Header(None)):
         raise HTTPException(403, "Forbidden")
 
     log.info("Cron deliver started")
-    now = utcnow().isoformat()
+    now = datetime.utcnow().isoformat()
 
     try:
         ready = (
@@ -1604,7 +1581,7 @@ async def cron_deliver(x_cron_secret: Optional[str] = Header(None)):
 
             supabase.table("inventory").update({
                 "status":       new_status,
-                "delivered_at": utcnow().isoformat(),
+                "delivered_at": datetime.utcnow().isoformat(),
             }).eq("id", inv_id).execute()
 
             if success:
@@ -1658,10 +1635,16 @@ async def webhook(
             ring_account = get_setting("ring_account", "@kinub")
             await tg_send_message(
                 tg_id,
-                f"Открой мини-приложение, и начинай свою игру!"
+                f"🎰 <b>Lucky Spin</b>\n\n"
+                f"Открой мини-приложение, нажми «Крутить рулетку» "
+                f"и отправь 2 кольца на {ring_account}.\n\n"
+                f"✅ <b>Гарантия:</b> первый выигрыш на 3-й ставке!",
             )
 
     return {"ok": True}
+
+
+
 
 
 
