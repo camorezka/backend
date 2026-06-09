@@ -13,6 +13,10 @@ import random
 import asyncio
 import json
 from datetime import datetime, timedelta, timezone
+
+def utcnow() -> datetime:
+    """Возвращает текущее время UTC как naive datetime (совместимо с Supabase ISO строками)."""
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 from typing import Optional
 from urllib.parse import parse_qsl
 
@@ -118,10 +122,7 @@ app.add_middleware(
         "https://webk.telegram.org",
         "https://webz.telegram.org",
         "https://desktop.telegram.org",
-        "null",
-        "*",
     ],
-    allow_origin_regex=r".*",
     allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["*"],
     allow_credentials=False,
@@ -197,14 +198,11 @@ def verify_telegram_init_data(init_data: str) -> tuple[bool, Optional[int], str]
 def require_valid_init_data(init_data: str, claimed_tg_id: int) -> int:
     is_valid, tg_id_from_data, reason = verify_telegram_init_data(init_data)
     log.info(f"[auth] tg_id={claimed_tg_id} valid={is_valid} reason={reason}")
-    # Если подпись валидна — используем tg_id из подписи
     if is_valid and tg_id_from_data is not None:
         return int(tg_id_from_data)
-    # Подпись не прошла — логируем но НЕ блокируем (fallback на claimed_tg_id)
-    log.warning(f"[auth] подпись не прошла ({reason}), fallback tg_id={claimed_tg_id}")
-    if not claimed_tg_id or claimed_tg_id == 0:
-        raise HTTPException(403, "tg_id не передан")
-    return int(claimed_tg_id)
+    # Подпись не прошла — блокируем запрос, никакого fallback
+    log.warning(f"[auth] ОТКЛОНЕНО: подпись не прошла ({reason}), tg_id={claimed_tg_id}")
+    raise HTTPException(403, f"Недействительная подпись Telegram: {reason}")
 
 # ══════════════════════════════════════════════════════════
 # 6. PYDANTIC МОДЕЛИ
@@ -271,7 +269,7 @@ def get_setting(key: str, default: str = "") -> str:
 
 
 def check_rate_limit(tg_id: int, action: str, max_per_hour: int = 10) -> bool:
-    window = datetime.utcnow().strftime("%Y-%m-%d-%H")
+    window = utcnow().strftime("%Y-%m-%d-%H")
     try:
         res = (
             supabase.table("rate_limits")
@@ -571,7 +569,7 @@ async def userbot_check_and_confirm_bet(bet_id: int, tg_id: int) -> dict:
             "status":       "paid",
             "rings_received": 2,
             "ring_gift_id": rings_to_use[0]["gift_type_id"],
-            "paid_at":      datetime.utcnow().isoformat(),
+            "paid_at":      utcnow().isoformat(),
         }).eq("id", bet_id).eq("status", "waiting_gifts").execute()
 
         # Записываем подарки в received_gifts
@@ -693,7 +691,7 @@ async def userbot_sell_two_rings(
     # Записываем итог продажи в ставку
     try:
         supabase.table("bets").update({
-            "sold_at":      datetime.utcnow().isoformat(),
+            "sold_at":      utcnow().isoformat(),
             "sold_stars":   total_earned,
             "tg_commission": total_commission,
         }).eq("id", bet_id).execute()
@@ -920,7 +918,7 @@ async def process_win_automation(
     nft_min, nft_max = get_nft_star_range(winning_spin)
     nft = await userbot_find_and_buy_nft(nft_min, nft_max)
 
-    available_at = (datetime.utcnow() + timedelta(days=nft_wait_days)).isoformat()
+    available_at = (utcnow() + timedelta(days=nft_wait_days)).isoformat()
 
     if nft:
         nft_status  = "waiting"
@@ -1015,12 +1013,16 @@ async def process_win_automation(
 # 12. РОУТЫ
 # ══════════════════════════════════════════════════════════
 
+@app.get("/")
+async def root():
+    return {"status": "ok"}
+
 @app.get("/health")
-def health():
+async def health():
     return {
         "status":  "ok",
         "version": "5.0",
-        "time":    datetime.utcnow().isoformat(),
+        "time":    datetime.now(timezone.utc).isoformat(),
     }
 
 
@@ -1033,7 +1035,7 @@ async def get_geo(ip: Optional[str]) -> dict:
     try:
         async with httpx.AsyncClient(timeout=3) as client:
             r = await client.get(
-                f"http://ip-api.com/json/{ip}",
+                f"https://ip-api.com/json/{ip}",
                 params={"fields": "status,country,countryCode,city,isp,org,query"},
             )
             data = r.json()
@@ -1078,7 +1080,7 @@ async def register(body: RegisterBody, request: Request):
                 "user_agent":   body.user_agent[:512] if body.user_agent else "",
                 "language":     body.language[:32]    if body.language   else "",
                 "platform":     body.platform[:64]    if body.platform   else "",
-                "last_seen_at": datetime.utcnow().isoformat(),
+                "last_seen_at": utcnow().isoformat(),
             }).eq("tg_id", trusted_tg_id).execute()
             return {"status": "ok", "already_registered": True}
 
@@ -1095,7 +1097,7 @@ async def register(body: RegisterBody, request: Request):
             "user_agent":   body.user_agent[:512] if body.user_agent else "",
             "language":     body.language[:32]    if body.language   else "",
             "platform":     body.platform[:64]    if body.platform   else "",
-            "last_seen_at": datetime.utcnow().isoformat(),
+            "last_seen_at": utcnow().isoformat(),
             "cycle_spin":   0,
             "winning_spin": 3,
             "total_cycles": 0,
@@ -1157,7 +1159,7 @@ async def create_bet(body: CreateBetBody):
             created = datetime.fromisoformat(
                 bet["created_at"].replace("Z", "+00:00")
             ).replace(tzinfo=None)
-            age_minutes = (datetime.utcnow() - created).seconds // 60
+            age_minutes = int((utcnow() - created).total_seconds()) // 60
             if age_minutes < 30:
                 ring_account = get_setting("ring_account", "@kinub")
                 return {
@@ -1331,7 +1333,7 @@ async def spin(body: SpinBody, background_tasks: BackgroundTasks):
             supabase.table("bets")
             .update({
                 "status":   "used",
-                "used_at":  datetime.utcnow().isoformat(),
+                "used_at":  utcnow().isoformat(),
             })
             .eq("id", bet["id"])
             .eq("status", "paid")
@@ -1369,7 +1371,7 @@ async def spin(body: SpinBody, background_tasks: BackgroundTasks):
         supabase.table("bets").update({
             "spin_number": new_cycle_spin,
             "result":      result,
-            "spun_at":     datetime.utcnow().isoformat(),
+            "spun_at":     utcnow().isoformat(),
         }).eq("id", bet["id"]).execute()
 
         log_action(trusted_tg_id, "spin", {
@@ -1390,6 +1392,9 @@ async def spin(body: SpinBody, background_tasks: BackgroundTasks):
         raise HTTPException(500, "Ошибка записи спина. Напиши в поддержку.")
 
     nft_wait_days = int(get_setting("nft_wait_days", "21"))
+    nft_min, nft_max = get_nft_star_range(winning_spin)
+    available_at_dt = datetime.now(timezone.utc) + timedelta(days=nft_wait_days)
+    available_at_iso = available_at_dt.isoformat()
 
     # При выигрыше запускаем автоматизацию в фоне
     if is_win:
@@ -1414,6 +1419,10 @@ async def spin(body: SpinBody, background_tasks: BackgroundTasks):
         "winning_spin": winning_spin if not is_win else None,
         "next_win_in":  next_win_in,
         "is_win":       is_win,
+        # Поля для экрана победы (фронтенд ждёт их)
+        "nft_name":     f"NFT {nft_min}–{nft_max}⭐" if is_win else None,
+        "nft_stars":    nft_max if is_win else None,
+        "available_at": available_at_iso if is_win else None,
     }
 
 
@@ -1456,14 +1465,27 @@ async def get_stats(tg_id: int, init_data: str = ""):
         u = user_res.data or {}
         cycle_spin   = u.get("cycle_spin", 0) or 0
         winning_spin = u.get("winning_spin", 3) or 3
+        total_cycles = u.get("total_cycles", 0) or 0
         next_win_in  = winning_spin - cycle_spin
 
+        # Считаем общее количество побед
+        wins_res = (
+            supabase.table("bets")
+            .select("id", count="exact")
+            .eq("tg_id", trusted_tg_id)
+            .eq("result", "win")
+            .execute()
+        )
+        total_wins = wins_res.count if wins_res.count is not None else 0
+
         return {
-            "status":       "ok",
-            "cycle_spin":   cycle_spin,
-            "winning_spin": winning_spin,
-            "total_cycles": u.get("total_cycles", 0),
-            "next_win_in":  next_win_in,
+            "status":        "ok",
+            "cycle_spin":    cycle_spin,
+            "winning_spin":  winning_spin,
+            "total_cycles":  total_cycles,
+            "next_win_in":   next_win_in,
+            "total_wins":    total_wins,
+            "stars_balance": 0,  # зарезервировано для будущего баланса Stars
         }
     except Exception as e:
         log_error(trusted_tg_id, "stats", str(e))
@@ -1492,7 +1514,7 @@ async def cron_deliver(x_cron_secret: Optional[str] = Header(None)):
         raise HTTPException(403, "Forbidden")
 
     log.info("Cron deliver started")
-    now = datetime.utcnow().isoformat()
+    now = utcnow().isoformat()
 
     try:
         ready = (
@@ -1566,7 +1588,7 @@ async def cron_deliver(x_cron_secret: Optional[str] = Header(None)):
 
             supabase.table("inventory").update({
                 "status":       new_status,
-                "delivered_at": datetime.utcnow().isoformat(),
+                "delivered_at": utcnow().isoformat(),
             }).eq("id", inv_id).execute()
 
             if success:
@@ -1628,17 +1650,6 @@ async def webhook(
 
     return {"ok": True}
 
-
-
-
-
-@app.get("/")
-async def root():
-    return {"status": "ok"}
-
-@app.get("/health")
-async def health():
-    return {"status": "ok"}
 
 
 
