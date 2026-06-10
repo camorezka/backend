@@ -209,13 +209,14 @@ def require_valid_init_data(init_data: str, claimed_tg_id: int) -> int:
 # ══════════════════════════════════════════════════════════
 
 class RegisterBody(BaseModel):
-    tg_id:      int
-    username:   str = ""
-    first_name: str = ""
-    init_data:  str
-    user_agent: str = ""
-    language:   str = ""
-    platform:   str = ""
+    tg_id:       int
+    username:    str = ""
+    first_name:  str = ""
+    init_data:   str
+    user_agent:  str = ""
+    language:    str = ""
+    platform:    str = ""
+    referrer_id: Optional[int] = None  # передаётся с фронта если есть ref_ параметр
 
     @field_validator("tg_id")
     @classmethod
@@ -1013,6 +1014,37 @@ async def process_win_automation(
 # 12. РОУТЫ
 # ══════════════════════════════════════════════════════════
 
+def _apply_referral(new_user_tg_id: int, referrer_id: int):
+    """
+    Записывает реферальную связь: new_user_tg_id пришёл по ссылке referrer_id.
+    Безопасно вызывать несколько раз — повторная запись не случится.
+    """
+    try:
+        # Записываем referrer_id новому пользователю
+        supabase.table("users").update({
+            "referred_by": referrer_id
+        }).eq("tg_id", new_user_tg_id).is_("referred_by", "null").execute()
+
+        # Увеличиваем счётчик рефералов у реферера
+        ref_res = (
+            supabase.table("users")
+            .select("referral_count")
+            .eq("tg_id", referrer_id)
+            .execute()
+        )
+        if ref_res.data:
+            old_count = ref_res.data[0].get("referral_count") or 0
+            supabase.table("users").update({
+                "referral_count": old_count + 1
+            }).eq("tg_id", referrer_id).execute()
+            log_action(new_user_tg_id, "ref_registered", {
+                "referrer": referrer_id, "new_count": old_count + 1
+            })
+        else:
+            log.warning(f"_apply_referral: referrer {referrer_id} not found in users")
+    except Exception as e:
+        log.warning(f"_apply_referral error: {e}")
+
 @app.get("/health")
 async def health():
     return {
@@ -1061,11 +1093,12 @@ async def register(body: RegisterBody, request: Request):
     try:
         existing = (
             supabase.table("users")
-            .select("tg_id")
+            .select("tg_id, referred_by")
             .eq("tg_id", trusted_tg_id)
             .execute()
         )
         if existing.data:
+            user_row = existing.data[0]
             # Обновляем каждый раз при входе — IP мог смениться
             supabase.table("users").update({
                 "ip_address":   ip,
@@ -1078,6 +1111,11 @@ async def register(body: RegisterBody, request: Request):
                 "platform":     body.platform[:64]    if body.platform   else "",
                 "last_seen_at": datetime.utcnow().isoformat(),
             }).eq("tg_id", trusted_tg_id).execute()
+
+            # Если реферер передан и ещё не записан — обновляем
+            if body.referrer_id and body.referrer_id != trusted_tg_id and not user_row.get("referred_by"):
+                _apply_referral(trusted_tg_id, body.referrer_id)
+
             return {"status": "ok", "already_registered": True}
 
         # Первый цикл: winning_spin = 3 (гарантия NFT на 3-й ставке)
@@ -1099,9 +1137,14 @@ async def register(body: RegisterBody, request: Request):
             "total_cycles": 0,
         }).execute()
 
+        # Применяем реферал сразу при новой регистрации
+        if body.referrer_id and body.referrer_id != trusted_tg_id:
+            _apply_referral(trusted_tg_id, body.referrer_id)
+
         log_action(trusted_tg_id, "register", {
             "ip": ip, "country": geo.get("country"), "city": geo.get("city"),
             "ua": body.user_agent[:120] if body.user_agent else "",
+            "referrer_id": body.referrer_id,
         })
         return {"status": "ok", "already_registered": False}
 
@@ -1608,6 +1651,32 @@ async def cron_deliver(x_cron_secret: Optional[str] = Header(None)):
     }
 
 
+# ─── PROFILE PHOTO ───────────────────────────────────────
+
+@app.get("/profile-photo/{tg_id}")
+async def get_profile_photo(tg_id: int, init_data: str = ""):
+    """
+    Возвращает фото профиля пользователя через Bot API.
+    Фронт вызывает этот эндпоинт если tgUser.photo_url недоступен.
+    """
+    try:
+        # getUserProfilePhotos через Bot API
+        result = await tg_api("getUserProfilePhotos", {"user_id": tg_id, "limit": 1})
+        if result.get("ok") and result.get("result", {}).get("photos"):
+            photos = result["result"]["photos"]
+            if photos and photos[0]:
+                # Берём самое большое фото
+                file_id = photos[0][-1]["file_id"]
+                file_res = await tg_api("getFile", {"file_id": file_id})
+                if file_res.get("ok") and file_res.get("result", {}).get("file_path"):
+                    file_path = file_res["result"]["file_path"]
+                    photo_url = f"https://api.telegram.org/file/bot{BOT_TOKEN}/{file_path}"
+                    return {"status": "ok", "photo_url": photo_url}
+    except Exception as e:
+        log.warning(f"profile_photo error tg_id={tg_id}: {e}")
+    return {"status": "ok", "photo_url": None}
+
+
 # ─── REFERRAL ────────────────────────────────────────────
 
 @app.get("/referral/{tg_id}")
@@ -1691,28 +1760,7 @@ async def webhook(
             try:
                 referrer_id = int(ref_param[4:])
                 if referrer_id != tg_id:
-                    existing = (
-                        supabase.table("users")
-                        .select("tg_id, referred_by")
-                        .eq("tg_id", tg_id)
-                        .execute()
-                    )
-                    user_data = existing.data[0] if existing.data else None
-                    if user_data and not user_data.get("referred_by"):
-                        supabase.table("users").update({
-                            "referred_by": referrer_id
-                        }).eq("tg_id", tg_id).execute()
-                        ref_res = (
-                            supabase.table("users")
-                            .select("referral_count")
-                            .eq("tg_id", referrer_id)
-                            .execute()
-                        )
-                        old_count = (ref_res.data[0].get("referral_count") or 0) if ref_res.data else 0
-                        supabase.table("users").update({
-                            "referral_count": old_count + 1
-                        }).eq("tg_id", referrer_id).execute()
-                        log_action(tg_id, "ref_registered", {"referrer": referrer_id})
+                    _apply_referral(tg_id, referrer_id)
             except Exception as e:
                 log.warning(f"webhook ref error: {e}")
 
