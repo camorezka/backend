@@ -1608,6 +1608,59 @@ async def cron_deliver(x_cron_secret: Optional[str] = Header(None)):
     }
 
 
+# ─── REFERRAL ────────────────────────────────────────────
+
+@app.get("/referral/{tg_id}")
+async def get_referral(tg_id: int, init_data: str = ""):
+    trusted_tg_id = require_valid_init_data(init_data, tg_id)
+    if not check_rate_limit(trusted_tg_id, "referral", max_per_hour=60):
+        raise HTTPException(429, "Слишком много запросов.")
+    try:
+        res = (
+            supabase.table("users")
+            .select("referral_count")
+            .eq("tg_id", trusted_tg_id)
+            .single()
+            .execute()
+        )
+        u = res.data or {}
+        return {
+            "status": "ok",
+            "referral_count": u.get("referral_count", 0) or 0,
+        }
+    except Exception as e:
+        log_error(trusted_tg_id, "referral", str(e))
+        return {"status": "ok", "referral_count": 0}
+
+
+# ─── LEADERBOARD ─────────────────────────────────────────
+
+@app.get("/leaderboard")
+async def get_leaderboard(init_data: str = ""):
+    try:
+        res = (
+            supabase.table("users")
+            .select("tg_id, username, total_cycles, cycle_spin")
+            .order("total_cycles", desc=True)
+            .limit(100)
+            .execute()
+        )
+        players = []
+        for u in (res.data or []):
+            total_spins = (u.get("total_cycles") or 0) * 5 + (u.get("cycle_spin") or 0)
+            players.append({
+                "tg_id":       u.get("tg_id"),
+                "username":    u.get("username") or "игрок",
+                "total_spins": total_spins,
+            })
+        # Сортируем по total_spins
+        players.sort(key=lambda x: x["total_spins"], reverse=True)
+        return {"status": "ok", "players": players}
+    except Exception as e:
+        log.error(f"leaderboard error: {e}")
+        return {"status": "ok", "players": []}
+
+
 # ─── WEBHOOK (Telegram Bot) ───────────────────────────────
 
 @app.post("/webhook")
@@ -1629,8 +1682,40 @@ async def webhook(
         return {"ok": True}
 
     message = data.get("message", {})
-    if message.get("text", "").startswith("/start"):
+    msg_text = message.get("text", "")
+    if msg_text.startswith("/start"):
         tg_id = message.get("from", {}).get("id")
+        parts = msg_text.split()
+        ref_param = parts[1] if len(parts) > 1 else ""
+        if tg_id and ref_param.startswith("ref_"):
+            try:
+                referrer_id = int(ref_param[4:])
+                if referrer_id != tg_id:
+                    existing = (
+                        supabase.table("users")
+                        .select("tg_id, referred_by")
+                        .eq("tg_id", tg_id)
+                        .execute()
+                    )
+                    user_data = existing.data[0] if existing.data else None
+                    if user_data and not user_data.get("referred_by"):
+                        supabase.table("users").update({
+                            "referred_by": referrer_id
+                        }).eq("tg_id", tg_id).execute()
+                        ref_res = (
+                            supabase.table("users")
+                            .select("referral_count")
+                            .eq("tg_id", referrer_id)
+                            .execute()
+                        )
+                        old_count = (ref_res.data[0].get("referral_count") or 0) if ref_res.data else 0
+                        supabase.table("users").update({
+                            "referral_count": old_count + 1
+                        }).eq("tg_id", referrer_id).execute()
+                        log_action(tg_id, "ref_registered", {"referrer": referrer_id})
+            except Exception as e:
+                log.warning(f"webhook ref error: {e}")
+
         if tg_id:
             ring_account = get_setting("ring_account", "@kinub")
             await tg_send_message(
