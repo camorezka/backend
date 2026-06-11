@@ -1717,31 +1717,13 @@ async def get_leaderboard(init_data: str = ""):
         players = []
         for u in (res.data or []):
             total_spins = (u.get("total_cycles") or 0) * 5 + (u.get("cycle_spin") or 0)
-            # photo_url получаем через Bot API (кеширование не нужно — Telegram CDN быстрый)
-            photo_url = None
-            try:
-                tg_id_val = u.get("tg_id")
-                if tg_id_val:
-                    ph_res = await tg_api("getUserProfilePhotos", {"user_id": tg_id_val, "limit": 1})
-                    if ph_res.get("ok") and ph_res.get("result", {}).get("photos"):
-                        photos = ph_res["result"]["photos"]
-                        if photos and photos[0]:
-                            file_id = photos[0][-1]["file_id"]
-                            file_res = await tg_api("getFile", {"file_id": file_id})
-                            if file_res.get("ok") and file_res.get("result", {}).get("file_path"):
-                                fp = file_res["result"]["file_path"]
-                                photo_url = f"https://api.telegram.org/file/bot{BOT_TOKEN}/{fp}"
-            except Exception:
-                pass
-
             players.append({
                 "tg_id":       u.get("tg_id"),
                 "username":    u.get("username") or "",
                 "first_name":  u.get("first_name") or "",
                 "total_spins": total_spins,
-                "photo_url":   photo_url,
+                "photo_url":   None,  # фото грузит фронт через tgUser или profile-photo
             })
-        # Сортируем по total_spins
         players.sort(key=lambda x: x["total_spins"], reverse=True)
         return {"status": "ok", "players": players}
     except Exception as e:
@@ -1784,22 +1766,20 @@ async def webhook(
                 log.warning(f"webhook ref error: {e}")
 
         if tg_id:
-            BOT_USERNAME_STR = "virus_play_bot"
+            BOT_USERNAME_STR = "leonardo_game_bot"
             APP_NAME_STR     = "app"
-            # Формируем startapp параметр с рефералом если есть
             startapp_param = ref_param if ref_param.startswith("ref_") else ""
             app_url = f"https://t.me/{BOT_USERNAME_STR}/{APP_NAME_STR}" + (f"?startapp={startapp_param}" if startapp_param else "")
 
             text = (
                 "🎰 <b>LEONARDO GAME</b>\n\n"
                 "Крути спины — получай крутые призы!\n\n"
-                "✅ <b>Гарантия:</b> выигрыш на 3-й ставке!\n"
-                "🎭 Есть <b>демо-прокрутка</b> — попробуй бесплатно!\n"
-                "🏆 Соревнуйся с другими в <b>топах игроков</b>\n\n"
+                "🎭 Есть <b>демо-прокрутка</b> — попробуй бесплатно\n"
+                "🏆 Соревнуйся с другими в <b>топах игроков</b>\n"
+                "👥 Приглашай друзей — получай <b>звёзды</b>\n\n"
                 "👇 Нажми кнопку ниже чтобы открыть игру:"
             )
 
-            # Кнопка inline — открывает Mini App
             reply_markup = {
                 "inline_keyboard": [[
                     {
