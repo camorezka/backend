@@ -1766,10 +1766,8 @@ async def webhook(
                 log.warning(f"webhook ref error: {e}")
 
         if tg_id:
-            BOT_USERNAME_STR = "leonardo_game_bot"
-            APP_NAME_STR     = "app"
             startapp_param = ref_param if ref_param.startswith("ref_") else ""
-            app_url = f"https://t.me/{BOT_USERNAME_STR}/{APP_NAME_STR}" + (f"?startapp={startapp_param}" if startapp_param else "")
+            app_url = FRONTEND_URL + (f"?start={startapp_param}" if startapp_param else "")
 
             text = (
                 "🎰 <b>LEONARDO GAME</b>\n\n"
