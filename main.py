@@ -1659,8 +1659,7 @@ async def cron_deliver(x_cron_secret: Optional[str] = Header(None)):
                 await tg_send_message(
                     tg_id,
                     f"🎁 <b>Твой NFT отправлен!</b>\n\n"
-                    f"<b>{nft_name}</b>\n\n"
-                    f"21 день прошёл — подарок уже в твоём профиле Telegram!",
+                    f"<b>{nft_name}</b>\n\n",
                 )
                 await tg_send_message(
                     ADMIN_TG_ID,
@@ -1835,20 +1834,14 @@ async def webhook(
             app_url = FRONTEND_URL + (f"?start={startapp_param}" if startapp_param else "")
 
             text = (
-                "🎰 <b>LEONARDO GAME</b>\n\n"
-                "Крути спины — получай крутые призы!\n\n"
-                "🎭 Есть <b>демо-прокрутка</b> — попробуй бесплатно\n"
-                "🏆 Соревнуйся с другими в <b>топах игроков</b>\n"
-                "👥 Приглашай друзей — получай <b>звёзды</b>\n\n"
+                "<b>LEONARDO GAME</b>\n\n"
                 "👇 Нажми кнопку ниже чтобы открыть игру:"
             )
 
             reply_markup = {
                 "inline_keyboard": [[
-                    {
-                        "text": "🎰 Открыть игру",
-                        "web_app": {"url": app_url}
-                    }
+                    {"text": "Открыть игру", "web_app": {"url": app_url}},
+                    {"text": "Наш канал", "url": "https://t.me/leonardo_public"}
                 ]]
             }
 
