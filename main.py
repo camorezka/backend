@@ -1834,15 +1834,14 @@ async def webhook(
             app_url = FRONTEND_URL + (f"?start={startapp_param}" if startapp_param else "")
 
             text = (
-                "<b>LEONARDO GAME</b>\n\n"
-                "👇 Нажми кнопку ниже чтобы открыть игру:"
+                "<b>LEONARDO GAME</b>"
             )
 
             reply_markup = {
-                "inline_keyboard": [[
-                    {"text": "Открыть игру", "web_app": {"url": app_url}},
-                    {"text": "Наш канал", "url": "https://t.me/leonardo_public"}
-                ]]
+                "inline_keyboard": [
+                    [{"text": "Открыть игру", "web_app": {"url": app_url}}],
+                    [{"text": "Наш канал", "url": "https://t.me/leonardo_public"}]
+                ]
             }
 
             import json as _json
