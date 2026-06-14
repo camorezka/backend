@@ -361,16 +361,34 @@ def pick_winning_spin_for_new_cycle(is_first_cycle: bool) -> int:
 def get_nft_star_range(winning_spin: int) -> tuple[int, int]:
     """
     Диапазон стоимости NFT зависит от того, на какой ставке выигрыш.
-    3-я ставка → 300–400 Stars
-    4-я ставка → 450–550 Stars
-    5-я ставка → 550–600 Stars
+    3-я ставка → 150–450 Stars  (тир 1)
+    4-я ставка → 450–550 Stars  (тир 2)
+    5-я ставка → 550–700 Stars  (тир 3)
     """
     if winning_spin == 3:
-        return 300, 400
+        return 150, 450
     elif winning_spin == 4:
         return 450, 550
     else:
-        return 550, 600
+        return 550, 700
+
+
+# ══════════════════════════════════════════════════════════
+# NFT ТИРЫ — какие именно модели подарков покупаются на каждом
+# выигрышном цикле. При покупке ищем среди доступных подарков
+# (payments.GetAvailableStarGifts) те, у которых title совпадает
+# с одним из имён ниже, и берём случайный (любая расцветка/вариант).
+# ══════════════════════════════════════════════════════════
+NFT_TIER_GIFTS = {
+    3: ["Vice Cream", "Instant Ramen", "Whip Cupcake", "Lunar Snake", "Tama Gadget", "Snake Box"],
+    4: ["Fresh Socks", "Party Sparkler", "Hypno Lolipop", "Easter Egg", "Big Year", "Tama Gadget"],
+    5: ["Witch Hat", "Stellar Rocket", "Input Key"],
+}
+
+
+def get_nft_tier_gift_names(winning_spin: int) -> list[str]:
+    """Возвращает список разрешённых названий подарков для данного winning_spin."""
+    return NFT_TIER_GIFTS.get(winning_spin, NFT_TIER_GIFTS[3])
 
 # ══════════════════════════════════════════════════════════
 # 10. USERBOT — PYROGRAM
@@ -715,21 +733,26 @@ async def userbot_sell_two_rings(
 
 
 async def userbot_find_and_buy_nft(
-    nft_min_stars: int, nft_max_stars: int
+    nft_min_stars: int, nft_max_stars: int, allowed_names: Optional[list[str]] = None
 ) -> Optional[dict]:
     """
-    Находит NFT в заданном диапазоне стоимости и покупает его на аккаунт @kinub.
+    Находит NFT нужной модели (по названию из allowed_names, любая
+    расцветка/вариант) и покупает его на аккаунт @kinub.
+    Если allowed_names не задан или совпадений не нашлось — fallback
+    на поиск по диапазону стоимости nft_min_stars..nft_max_stars.
 
     Алгоритм:
     1. Вызываем payments.GetAvailableStarGifts — список доступных подарков.
        Метод: payments.getAvailableStarGifts#3e4bfd00 → payments.StarGifts
-       Фильтруем по is_limited=True (NFT) и star_count в диапазоне.
+       Фильтруем по is_limited=True (NFT), наличию остатка и совпадению title
+       с одним из allowed_names (без учёта регистра). Если allowed_names
+       не задан или совпадений нет — фильтруем по star_count в диапазоне.
 
     2. Если нет подходящих обычных NFT — пробуем unique gifts через
        payments.GetUniqueStarGift по известным slug (этот метод требует slug,
        автоматический перебор невозможен через API).
 
-    3. Случайно выбираем один NFT из подходящих.
+    3. Случайно выбираем один NFT из подходящих (любая расцветка той же модели).
 
     4. Покупаем: payments.SendStarGift#3d2d5e38
        Параметры:
@@ -765,25 +788,60 @@ async def userbot_find_and_buy_nft(
 
         all_gifts = gifts_result.gifts if hasattr(gifts_result, "gifts") else []
 
-        # Фильтруем: limited (NFT), в диапазоне стоимости, есть остаток
-        nft_candidates = []
-        for g in all_gifts:
-            star_count     = getattr(g, "stars", 0)
-            is_limited     = getattr(g, "limited", False)
-            remaining      = getattr(g, "availability_remains", 1)
-            gift_id        = getattr(g, "id", None)
+        allowed_lower = set(n.strip().lower() for n in (allowed_names or []))
 
-            if (
-                is_limited and
-                gift_id and
-                nft_min_stars <= star_count <= nft_max_stars and
-                (remaining is None or remaining > 0)
-            ):
-                nft_candidates.append(g)
+        def gift_title(g) -> str:
+            title = getattr(g, "title", None)
+            if title:
+                return str(title)
+            sticker = getattr(g, "sticker", None)
+            if sticker:
+                return str(getattr(sticker, "alt", "") or "")
+            return ""
+
+        # Этап 1: ищем точное совпадение по названию модели (любая расцветка)
+        nft_candidates = []
+        if allowed_lower:
+            for g in all_gifts:
+                is_limited = getattr(g, "limited", False)
+                remaining  = getattr(g, "availability_remains", 1)
+                gift_id    = getattr(g, "id", None)
+                title      = gift_title(g)
+
+                if (
+                    is_limited and
+                    gift_id and
+                    title.strip().lower() in allowed_lower and
+                    (remaining is None or remaining > 0)
+                ):
+                    nft_candidates.append(g)
+
+            if not nft_candidates:
+                log.warning(
+                    f"userbot_find_and_buy_nft: нет совпадений по названиям "
+                    f"{sorted(allowed_lower)} — fallback на диапазон стоимости"
+                )
+
+        # Этап 2 (fallback): фильтр по диапазону стоимости
+        if not nft_candidates:
+            for g in all_gifts:
+                star_count = getattr(g, "stars", 0)
+                is_limited = getattr(g, "limited", False)
+                remaining  = getattr(g, "availability_remains", 1)
+                gift_id    = getattr(g, "id", None)
+
+                if (
+                    is_limited and
+                    gift_id and
+                    nft_min_stars <= star_count <= nft_max_stars and
+                    (remaining is None or remaining > 0)
+                ):
+                    nft_candidates.append(g)
 
         if not nft_candidates:
             log.warning(
-                f"userbot_find_and_buy_nft: нет NFT в диапазоне "
+                f"userbot_find_and_buy_nft: нет NFT ни по названиям "
+                f"{sorted(allowed_lower)}, ни в диапазоне "
                 f"{nft_min_stars}–{nft_max_stars} Stars"
             )
             return None
@@ -792,13 +850,17 @@ async def userbot_find_and_buy_nft(
         gift_id = getattr(chosen, "id", None)
         stars   = getattr(chosen, "stars", 0)
 
-        # Название: берём из title или emoji sticker
-        sticker = getattr(chosen, "sticker", None)
-        if sticker:
-            emoji = getattr(sticker, "emoji", "🎁")
-            name  = f"{emoji} Gift #{gift_id}"
+        # Название: берём из title, иначе из emoji sticker
+        title_name = gift_title(chosen)
+        if title_name:
+            name = title_name
         else:
-            name  = f"NFT Gift #{gift_id}"
+            sticker = getattr(chosen, "sticker", None)
+            if sticker:
+                emoji = getattr(sticker, "emoji", "🎁")
+                name  = f"{emoji} Gift #{gift_id}"
+            else:
+                name  = f"NFT Gift #{gift_id}"
 
         log.info(f"userbot: buying NFT gift_id={gift_id} name={name} stars={stars}")
 
@@ -917,7 +979,8 @@ async def process_win_automation(
 
     # Шаг 3: определяем диапазон NFT и покупаем
     nft_min, nft_max = get_nft_star_range(winning_spin)
-    nft = await userbot_find_and_buy_nft(nft_min, nft_max)
+    allowed_names = get_nft_tier_gift_names(winning_spin)
+    nft = await userbot_find_and_buy_nft(nft_min, nft_max, allowed_names)
 
     available_at = (datetime.utcnow() + timedelta(days=nft_wait_days)).isoformat()
 
@@ -968,8 +1031,9 @@ async def process_win_automation(
         )
 
     else:
-        # NFT не найден в диапазоне — ручная обработка
-        nft_name   = f"NFT {nft_min}–{nft_max}⭐ (ручная покупка)"
+        # NFT не найден ни по названию, ни в диапазоне — ручная обработка
+        names_str  = ", ".join(allowed_names)
+        nft_name   = f"{names_str} ({nft_min}–{nft_max}⭐, ручная покупка)"
         nft_stars  = nft_max
         nft_msg_id = None
         nft_status = "manual"
@@ -991,18 +1055,19 @@ async def process_win_automation(
 
         notify_text = (
             f"🎉 <b>Ты выиграл!</b>\n\n"
-            f"Администратор подберёт для тебя NFT стоимостью "
-            f"{nft_min}–{nft_max}⭐.\n\n"
+            f"Администратор подберёт для тебя один из подарков: "
+            f"{names_str} ({nft_min}–{nft_max}⭐).\n\n"
             f"🕐 Подарок будет отправлен через {nft_wait_days} дней."
         )
 
         admin_text = (
             f"🎰 <b>Выигрыш! НУЖНА РУЧНАЯ ПОКУПКА NFT!</b>\n"
             f"Пользователь: {tg_id}\n"
+            f"Подходящие модели: {names_str}\n"
             f"Диапазон: {nft_min}–{nft_max}⭐\n"
             f"Ставка #{winning_spin} в цикле\n"
             f"Выдать: {available_at[:10]}\n"
-            f"❗ В диапазоне не нашлось NFT — купи вручную и обнови inventory."
+            f"❗ Ни одна модель из списка не найдена в наличии — купи вручную и обнови inventory."
         )
 
     await tg_send_message(tg_id, notify_text)
