@@ -1079,32 +1079,50 @@ async def process_win_automation(
 # 12. РОУТЫ
 # ══════════════════════════════════════════════════════════
 
+# Количество звёзд, которые получает реферер за каждого приглашённого
+REFERRAL_STARS_REWARD = 5
+
 def _apply_referral(new_user_tg_id: int, referrer_id: int):
     """
     Записывает реферальную связь: new_user_tg_id пришёл по ссылке referrer_id.
+    Начисляет REFERRAL_STARS_REWARD звёзд рефереру в stars_balance.
     Безопасно вызывать несколько раз — повторная запись не случится.
     """
     try:
-        # Записываем referrer_id новому пользователю
-        supabase.table("users").update({
+        # Записываем referrer_id новому пользователю (только если ещё не записан)
+        upd = supabase.table("users").update({
             "referred_by": referrer_id
         }).eq("tg_id", new_user_tg_id).is_("referred_by", "null").execute()
 
-        # Увеличиваем счётчик рефералов у реферера
+        # Если referred_by уже был записан — ничего не делаем (не дублируем награду)
+        if not upd.data:
+            log.info(f"_apply_referral: {new_user_tg_id} already has a referrer, skip reward")
+            return
+
+        # Увеличиваем счётчик рефералов и начисляем звёзды рефереру
         ref_res = (
             supabase.table("users")
-            .select("referral_count")
+            .select("referral_count, stars_balance")
             .eq("tg_id", referrer_id)
             .execute()
         )
         if ref_res.data:
-            old_count = ref_res.data[0].get("referral_count") or 0
+            old_count   = ref_res.data[0].get("referral_count") or 0
+            old_stars   = ref_res.data[0].get("stars_balance") or 0
+            new_stars   = old_stars + REFERRAL_STARS_REWARD
             supabase.table("users").update({
-                "referral_count": old_count + 1
+                "referral_count": old_count + 1,
+                "stars_balance":  new_stars,
             }).eq("tg_id", referrer_id).execute()
             log_action(new_user_tg_id, "ref_registered", {
-                "referrer": referrer_id, "new_count": old_count + 1
+                "referrer": referrer_id,
+                "new_count": old_count + 1,
+                "stars_awarded": REFERRAL_STARS_REWARD,
+                "referrer_new_balance": new_stars,
             })
+            log.info(
+                f"_apply_referral: referrer={referrer_id} earned {REFERRAL_STARS_REWARD}⭐ "                f"(total={new_stars}⭐), referrals={old_count+1}"
+            )
         else:
             log.warning(f"_apply_referral: referrer {referrer_id} not found in users")
     except Exception as e:
@@ -1559,16 +1577,31 @@ async def get_stats(tg_id: int, init_data: str = ""):
     try:
         user_res = (
             supabase.table("users")
-            .select("cycle_spin, winning_spin, total_cycles")
+            .select("cycle_spin, winning_spin, total_cycles, stars_balance, free_spin_at")
             .eq("tg_id", trusted_tg_id)
             .single()
             .execute()
         )
         u = user_res.data or {}
-        cycle_spin   = u.get("cycle_spin", 0) or 0
-        winning_spin = u.get("winning_spin", 3) or 3
-        total_cycles = u.get("total_cycles", 0) or 0
-        next_win_in  = winning_spin - cycle_spin
+        cycle_spin      = u.get("cycle_spin", 0) or 0
+        winning_spin    = u.get("winning_spin", 3) or 3
+        total_cycles    = u.get("total_cycles", 0) or 0
+        stars_balance   = u.get("stars_balance", 0) or 0
+        next_win_in     = winning_spin - cycle_spin
+
+        # Проверяем доступность бесплатного прокрута (раз в 24 ч)
+        free_spin_at    = u.get("free_spin_at")
+        free_spin_available = True
+        free_spin_next_ts   = None
+        if free_spin_at:
+            try:
+                last_free = datetime.fromisoformat(str(free_spin_at).replace("Z", "+00:00")).replace(tzinfo=None)
+                diff = datetime.utcnow() - last_free
+                if diff.total_seconds() < 86400:
+                    free_spin_available = False
+                    free_spin_next_ts   = int(last_free.timestamp()) + 86400
+            except Exception:
+                pass
 
         wins_res = (
             supabase.table("bets")
@@ -1580,13 +1613,15 @@ async def get_stats(tg_id: int, init_data: str = ""):
         total_wins = wins_res.count if wins_res.count is not None else 0
 
         return {
-            "status":        "ok",
-            "cycle_spin":    cycle_spin,
-            "winning_spin":  winning_spin,
-            "total_cycles":  total_cycles,
-            "next_win_in":   next_win_in,
-            "total_wins":    total_wins,
-            "stars_balance": 0,
+            "status":               "ok",
+            "cycle_spin":           cycle_spin,
+            "winning_spin":         winning_spin,
+            "total_cycles":         total_cycles,
+            "next_win_in":          next_win_in,
+            "total_wins":           total_wins,
+            "stars_balance":        stars_balance,
+            "free_spin_available":  free_spin_available,
+            "free_spin_next_ts":    free_spin_next_ts,
         }
     except Exception as e:
         log_error(trusted_tg_id, "stats", str(e))
@@ -1743,6 +1778,8 @@ async def get_profile_photo(tg_id: int, init_data: str = ""):
 
 # ─── REFERRAL ────────────────────────────────────────────
 
+BOT_USERNAME = "leonardo_game_bot"  # имя бота без @
+
 @app.get("/referral/{tg_id}")
 async def get_referral(tg_id: int, init_data: str = ""):
     trusted_tg_id = require_valid_init_data(init_data, tg_id)
@@ -1751,19 +1788,115 @@ async def get_referral(tg_id: int, init_data: str = ""):
     try:
         res = (
             supabase.table("users")
-            .select("referral_count")
+            .select("referral_count, stars_balance")
             .eq("tg_id", trusted_tg_id)
             .single()
             .execute()
         )
         u = res.data or {}
+        # Ссылка в формате t.me/<bot>/<app>?startapp=inviteCode<tg_id>
+        ref_link = f"https://t.me/{BOT_USERNAME}/app?startapp=inviteCode{trusted_tg_id}"
         return {
-            "status": "ok",
-            "referral_count": u.get("referral_count", 0) or 0,
+            "status":          "ok",
+            "referral_count":  u.get("referral_count", 0) or 0,
+            "stars_balance":   u.get("stars_balance", 0) or 0,
+            "ref_link":        ref_link,
+            "stars_per_ref":   REFERRAL_STARS_REWARD,
         }
     except Exception as e:
         log_error(trusted_tg_id, "referral", str(e))
-        return {"status": "ok", "referral_count": 0}
+        return {"status": "ok", "referral_count": 0, "stars_balance": 0,
+                "ref_link": f"https://t.me/{BOT_USERNAME}/app?startapp=inviteCode{tg_id}",
+                "stars_per_ref": REFERRAL_STARS_REWARD}
+
+
+# ─── FREE SPIN ────────────────────────────────────────────
+
+class FreeSpin(BaseModel):
+    tg_id:     int
+    init_data: str
+
+    @field_validator("tg_id")
+    @classmethod
+    def tg_id_positive(cls, v):
+        if v <= 0:
+            raise ValueError("tg_id должен быть положительным")
+        return v
+
+FREE_SPIN_STARS_MIN = 1
+FREE_SPIN_STARS_MAX = 8
+
+@app.post("/free-spin")
+async def free_spin(body: FreeSpin):
+    """
+    Бесплатный прокрут рулетки раз в 24 часа.
+    Всегда выпадают звёзды (1–8), начисляются в stars_balance.
+    """
+    trusted_tg_id = require_valid_init_data(body.init_data, body.tg_id)
+    if not check_rate_limit(trusted_tg_id, "free_spin", max_per_hour=5):
+        raise HTTPException(429, "Слишком много запросов.")
+
+    try:
+        user_res = (
+            supabase.table("users")
+            .select("stars_balance, free_spin_at")
+            .eq("tg_id", trusted_tg_id)
+            .single()
+            .execute()
+        )
+        if not user_res.data:
+            raise HTTPException(404, "Пользователь не найден.")
+
+        u = user_res.data
+        free_spin_at  = u.get("free_spin_at")
+        stars_balance = u.get("stars_balance") or 0
+
+        # Проверяем 24-часовой кулдаун
+        if free_spin_at:
+            try:
+                last_free = datetime.fromisoformat(
+                    str(free_spin_at).replace("Z", "+00:00")
+                ).replace(tzinfo=None)
+                diff = datetime.utcnow() - last_free
+                if diff.total_seconds() < 86400:
+                    next_ts = int(last_free.timestamp()) + 86400
+                    raise HTTPException(
+                        429,
+                        f"Бесплатный прокрут будет доступен через "                        f"{int((86400 - diff.total_seconds()) // 3600 + 1)} ч. "                        f"(next_ts={next_ts})"
+                    )
+            except HTTPException:
+                raise
+            except Exception:
+                pass
+
+        # Начисляем звёзды
+        stars_won = random.randint(FREE_SPIN_STARS_MIN, FREE_SPIN_STARS_MAX)
+        new_balance = stars_balance + stars_won
+
+        supabase.table("users").update({
+            "stars_balance": new_balance,
+            "free_spin_at":  datetime.utcnow().isoformat(),
+        }).eq("tg_id", trusted_tg_id).execute()
+
+        log_action(trusted_tg_id, "free_spin", {
+            "stars_won": stars_won, "new_balance": new_balance,
+        })
+
+        # Считаем следующий доступный прокрут
+        next_free_ts = int(datetime.utcnow().timestamp()) + 86400
+
+        return {
+            "status":       "ok",
+            "stars_won":    stars_won,
+            "stars_balance": new_balance,
+            "next_free_ts": next_free_ts,
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        log_error(trusted_tg_id, "free_spin", str(e))
+        raise HTTPException(500, "Ошибка бесплатного прокрута.")
 
 
 # ─── LEADERBOARD ─────────────────────────────────────────
@@ -1821,17 +1954,26 @@ async def webhook(
         tg_id = message.get("from", {}).get("id")
         parts = msg_text.split()
         ref_param = parts[1] if len(parts) > 1 else ""
-        if tg_id and ref_param.startswith("ref_"):
+        referrer_id_from_param = None
+        # Поддерживаем форматы: inviteCode<id> и ref_<id>
+        if tg_id and ref_param.startswith("inviteCode"):
             try:
-                referrer_id = int(ref_param[4:])
-                if referrer_id != tg_id:
-                    _apply_referral(tg_id, referrer_id)
+                referrer_id_from_param = int(ref_param[len("inviteCode"):])
+                if referrer_id_from_param != tg_id:
+                    _apply_referral(tg_id, referrer_id_from_param)
+            except Exception as e:
+                log.warning(f"webhook inviteCode ref error: {e}")
+        elif tg_id and ref_param.startswith("ref_"):
+            try:
+                referrer_id_from_param = int(ref_param[4:])
+                if referrer_id_from_param != tg_id:
+                    _apply_referral(tg_id, referrer_id_from_param)
             except Exception as e:
                 log.warning(f"webhook ref error: {e}")
 
         if tg_id:
-            startapp_param = ref_param if ref_param.startswith("ref_") else ""
-            app_url = FRONTEND_URL + (f"?start={startapp_param}" if startapp_param else "")
+            startapp_param = ref_param if (ref_param.startswith("inviteCode") or ref_param.startswith("ref_")) else ""
+            app_url = FRONTEND_URL + (f"?startapp={startapp_param}" if startapp_param else "")
 
             text = (
                 "<b>LEONARDO GAME</b>"
