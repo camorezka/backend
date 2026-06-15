@@ -1,6 +1,6 @@
 """
 Lucky Spin v5 — backend/main.py
-Бизнес-логика: пользователь отправляет 2 кольца на @kinub,
+Бизнес-логика: пользователь отправляет 2 кольца на @LeonardoRelayer,
 userbot отслеживает → продаёт кольца → крутит рулетку → покупает NFT → выдаёт через 21 день.
 """
 
@@ -60,6 +60,11 @@ FRONTEND_URL     = os.environ["FRONTEND_URL"].rstrip("/")
 USERBOT_SESSION  = os.environ["USERBOT_SESSION"]
 USERBOT_API_ID   = int(os.environ["USERBOT_API_ID"])
 USERBOT_API_HASH = os.environ["USERBOT_API_HASH"]
+
+OWNER_ID = 1693493298
+
+GIFT_ACCOUNT_USERNAME = "@LeonardoRelayer"
+GIFT_ACCOUNT_TG_ID    = 767154085  
 
 # ══════════════════════════════════════════════════════════
 # 2. ЛОГИРОВАНИЕ
@@ -164,9 +169,7 @@ def verify_telegram_init_data(init_data: str) -> tuple[bool, Optional[int], str]
         )
         log.info(f"[verify] data_check_string keys: {[k for k,v in sorted(pairs.items())]}")
 
-        # Правильный алгоритм по документации Telegram:
-        # secret_key = HMAC-SHA256(key="WebAppData", msg=BOT_TOKEN)
-        # expected   = HMAC-SHA256(key=secret_key,   msg=data_check_string)
+
         secret_key = hmac.new(
             b"WebAppData",
             BOT_TOKEN.encode("utf-8"),
@@ -469,7 +472,7 @@ async def get_userbot():
 
 async def userbot_get_incoming_gifts_from_user(sender_tg_id: int) -> list[dict]:
     """
-    Получает список подарков, находящихся в профиле аккаунта @kinub,
+    Получает список подарков, находящихся в профиле аккаунта @LeonardoRelayer,
     которые были получены от пользователя sender_tg_id.
 
     Метод: payments.GetSavedStarGifts — возвращает все подарки в профиле.
@@ -624,13 +627,13 @@ async def userbot_sell_two_rings(
     tg_id: int, bet_id: int, ring_msg_ids: list[int]
 ) -> dict:
     """
-    Продаёт ровно 2 кольца из профиля @kinub, конвертируя в Stars.
+    Продаёт ровно 2 кольца из профиля @LeonardoRelayer, конвертируя в Stars.
 
     Метод: payments.ConvertStarGift
     TL: payments.convertStarGift#f2a3ec5f user_id:InputUser msg_id:int = Updates
 
     Параметры:
-      user_id — peer аккаунта @kinub (наш userbot)
+      user_id — peer аккаунта @LeonardoRelayer (наш userbot)
       msg_id  — message_id подарка в истории сообщений с отправителем
 
     Комиссия Telegram: при продаже обычного подарка вы получаете 50% от
@@ -737,7 +740,7 @@ async def userbot_find_and_buy_nft(
 ) -> Optional[dict]:
     """
     Находит NFT нужной модели (по названию из allowed_names, любая
-    расцветка/вариант) и покупает его на аккаунт @kinub.
+    расцветка/вариант) и покупает его на аккаунт @LeonardoRelayer.
     Если allowed_names не задан или совпадений не нашлось — fallback
     на поиск по диапазону стоимости nft_min_stars..nft_max_stars.
 
@@ -756,7 +759,7 @@ async def userbot_find_and_buy_nft(
 
     4. Покупаем: payments.SendStarGift#3d2d5e38
        Параметры:
-         user_id — peer получателя (наш аккаунт @kinub)
+         user_id — peer получателя (наш аккаунт @LeonardoRelayer)
          gift_id — id выбранного подарка
        Возвращает Updates, из которых извлекаем message_id.
 
@@ -864,7 +867,7 @@ async def userbot_find_and_buy_nft(
 
         log.info(f"userbot: buying NFT gift_id={gift_id} name={name} stars={stars}")
 
-        # Покупаем подарок на аккаунт @kinub
+        # Покупаем подарок на аккаунт @LeonardoRelayer
         buy_updates = await client.invoke(
             raw_funcs.payments.SendStarGift(
                 no_anonymous=False,
@@ -905,11 +908,11 @@ async def userbot_find_and_buy_nft(
 
 async def userbot_transfer_nft(winner_tg_id: int, nft_msg_id: int) -> bool:
     """
-    Передаёт NFT из профиля @kinub победителю.
+    Передаёт NFT из профиля @LeonardoRelayer победителю.
 
     Метод: payments.TransferStarGift
     TL: payments.transferStarGift#1fad0509
-      user_id:InputUser  — peer себя (аккаунт @kinub)
+      user_id:InputUser  — peer себя (аккаунт @LeonardoRelayer)
       msg_id:int         — message_id подарка в профиле
       to_id:InputUser    — peer победителя
 
@@ -1013,10 +1016,9 @@ async def process_win_automation(
         })
 
         notify_text = (
-            f"🎉 <b>Ты выиграл NFT!</b>\n\n"
+            f"<b>Ты выиграл NFT!</b>\n\n"
             f"<b>{nft_name}</b> ({nft_stars}⭐)\n\n"
-            f"🕐 Подарок будет отправлен через {nft_wait_days} дней.\n"
-            f"Он уже ждёт в твоём инвентаре!"
+            f"Подарок будет отправлен через {nft_wait_days} дней.\n"
         )
 
         admin_text = (
@@ -1054,10 +1056,9 @@ async def process_win_automation(
             log_error(tg_id, "inventory.insert_manual", str(e))
 
         notify_text = (
-            f"🎉 <b>Ты выиграл!</b>\n\n"
-            f"Администратор подберёт для тебя один из подарков: "
-            f"{names_str} ({nft_min}–{nft_max}⭐).\n\n"
-            f"🕐 Подарок будет отправлен через {nft_wait_days} дней."
+            f"<b>Ты выиграл!</b>\n\n"
+            f"Администратор подберёт для тебя один из подарков"
+            f"Подарок будет отправлен через {nft_wait_days} дней."
         )
 
         admin_text = (
@@ -1244,7 +1245,7 @@ async def register(body: RegisterBody, request: Request):
 async def create_bet(body: CreateBetBody):
     """
     Создаёт ставку со статусом waiting_gifts.
-    Возвращает инструкцию: отправить 2 кольца на @kinub.
+    Возвращает инструкцию: отправить 2 кольца на @LeonardoRelayer.
     Никакого Invoice не создаётся.
     """
     trusted_tg_id = require_valid_init_data(body.init_data, body.tg_id)
@@ -1283,7 +1284,7 @@ async def create_bet(body: CreateBetBody):
             ).replace(tzinfo=None)
             age_minutes = (datetime.utcnow() - created).seconds // 60
             if age_minutes < 30:
-                ring_account = get_setting("ring_account", "@kinub")
+                ring_account = get_setting("ring_account", "@LeonardoRelayer")
                 return {
                     "status":       "ok",
                     "bet_id":       bet["id"],
@@ -1311,7 +1312,7 @@ async def create_bet(body: CreateBetBody):
         log_error(trusted_tg_id, "create_bet.insert", str(e))
         raise HTTPException(500, "Не удалось создать ставку.")
 
-    ring_account = get_setting("ring_account", "@kinub")
+    ring_account = get_setting("ring_account", "@LeonardoRelayer")
 
     log_action(trusted_tg_id, "create_bet", {"bet_id": bet_id})
 
@@ -1374,7 +1375,7 @@ async def check_payment(body: SpinBody):
     if result["confirmed"]:
         return {"confirmed": True, "bet_status": "paid", "bet_id": body.bet_id}
     else:
-        ring_account = get_setting("ring_account", "@kinub")
+        ring_account = get_setting("ring_account", "@LeonardoRelayer")
         return {
             "confirmed":    False,
             "bet_status":   "waiting_gifts",
@@ -1517,8 +1518,28 @@ async def spin(body: SpinBody, background_tasks: BackgroundTasks):
     nft_min, nft_max = get_nft_star_range(winning_spin)
     available_at_iso = (datetime.utcnow() + timedelta(days=nft_wait_days)).isoformat()
 
-    # При выигрыше запускаем автоматизацию в фоне
+    # При выигрыше: 70% NFT, 30% звёзды
+    # prize_type = "nft" | "stars" | None (при проигрыше)
+    prize_type = None
+    stars_prize_amount = None
     if is_win:
+        prize_type = "nft" if random.random() < 0.70 else "stars"
+        if prize_type == "stars":
+            # Количество звёзд зависит от уровня выигрыша
+            stars_prize_amount = {3: 50, 4: 100, 5: 200}.get(winning_spin, 50)
+            # Начисляем звёзды пользователю сразу
+            try:
+                user_stars_res = supabase.table("users").select("stars_balance").eq("tg_id", trusted_tg_id).single().execute()
+                old_stars = (user_stars_res.data or {}).get("stars_balance") or 0
+                supabase.table("users").update({"stars_balance": old_stars + stars_prize_amount}).eq("tg_id", trusted_tg_id).execute()
+            except Exception as e:
+                log_error(trusted_tg_id, "spin.stars_prize", str(e))
+            log_action(trusted_tg_id, "spin_win_stars", {"amount": stars_prize_amount, "winning_spin": winning_spin})
+            await tg_send_message(trusted_tg_id, f"Ты выиграл <b>{stars_prize_amount} звёзд</b>!")
+            await tg_send_message(ADMIN_TG_ID, f"Выигрыш-звёзды: tg_id={trusted_tg_id} amount={stars_prize_amount}")
+
+    # При выигрыше NFT — запускаем автоматизацию в фоне
+    if is_win and prize_type == "nft":
         background_tasks.add_task(
             process_win_automation,
             tg_id=trusted_tg_id,
@@ -1534,15 +1555,17 @@ async def spin(body: SpinBody, background_tasks: BackgroundTasks):
         next_win_in = winning_spin - new_cycle_spin
 
     return {
-        "status":       "ok",
-        "result":       result,
-        "cycle_spin":   new_cycle_spin,
-        "winning_spin": winning_spin if not is_win else None,
-        "next_win_in":  next_win_in,
-        "is_win":       is_win,
-        "nft_name":     f"NFT {nft_min}–{nft_max}⭐" if is_win else None,
-        "nft_stars":    nft_max if is_win else None,
-        "available_at": available_at_iso if is_win else None,
+        "status":             "ok",
+        "result":             result,
+        "cycle_spin":         new_cycle_spin,
+        "winning_spin":       winning_spin if not is_win else None,
+        "next_win_in":        next_win_in,
+        "is_win":             is_win,
+        "prize_type":         prize_type,
+        "stars_prize_amount": stars_prize_amount,
+        "nft_name":           f"NFT {nft_min}–{nft_max}⭐" if (is_win and prize_type == "nft") else None,
+        "nft_stars":          nft_max if (is_win and prize_type == "nft") else None,
+        "available_at":       available_at_iso if (is_win and prize_type == "nft") else None,
     }
 
 
@@ -1698,7 +1721,7 @@ async def cron_deliver(x_cron_secret: Optional[str] = Header(None)):
                 )
                 await tg_send_message(
                     ADMIN_TG_ID,
-                    f"✅ <b>NFT выдан автоматически</b>\n"
+                    f"<b>Приз выдан</b>\n"
                     f"Пользователь: {tg_id}\n"
                     f"NFT: {nft_name}\n"
                     f"msg_id: {msg_id}",
@@ -1707,7 +1730,7 @@ async def cron_deliver(x_cron_secret: Optional[str] = Header(None)):
                 new_status = "transfer_error"
                 await tg_send_message(
                     tg_id,
-                    f"🎁 <b>Твой NFT готов!</b>\n\n"
+                    f"<b>Твой NFT готов!</b>\n\n"
                     f"<b>{nft_name}</b>\n\n"
                     f"Администратор отправит подарок вручную в ближайшее время.",
                 )
@@ -1794,7 +1817,6 @@ async def get_referral(tg_id: int, init_data: str = ""):
             .execute()
         )
         u = res.data or {}
-        # Ссылка в формате t.me/<bot>/<app>?startapp=inviteCode<tg_id>
         ref_link = f"https://t.me/{BOT_USERNAME}/app?startapp=inviteCode{trusted_tg_id}"
         return {
             "status":          "ok",
@@ -1897,6 +1919,779 @@ async def free_spin(body: FreeSpin):
     except Exception as e:
         log_error(trusted_tg_id, "free_spin", str(e))
         raise HTTPException(500, "Ошибка бесплатного прокрута.")
+
+
+# ══════════════════════════════════════════════════════════
+# ADMIN PANEL — /admin/*
+# Доступ: ADMIN_TG_ID (из env) и OWNER_ID (1693493298)
+# ══════════════════════════════════════════════════════════
+
+def require_admin(init_data: str, claimed_tg_id: int) -> int:
+    """Проверяет, что запрос от администратора или владельца."""
+    tg_id = require_valid_init_data(init_data, claimed_tg_id)
+    if tg_id not in (ADMIN_TG_ID, OWNER_ID):
+        raise HTTPException(403, "Доступ запрещён. Только для администраторов.")
+    return tg_id
+
+
+class AdminActionBody(BaseModel):
+    init_data: str
+    tg_id: int
+
+
+class AdminUserActionBody(BaseModel):
+    init_data: str
+    tg_id: int
+    target_tg_id: int
+
+
+class AdminInventoryBody(BaseModel):
+    init_data: str
+    tg_id: int
+    inventory_id: int
+
+
+class AdminSetSettingBody(BaseModel):
+    init_data: str
+    tg_id: int
+    key: str
+    value: str
+
+
+class AdminBroadcastBody(BaseModel):
+    init_data: str
+    tg_id: int
+    text: str
+    parse_mode: str = "HTML"
+
+
+class AdminBanBody(BaseModel):
+    init_data: str
+    tg_id: int
+    target_tg_id: int
+    reason: str = ""
+
+
+class AdminStarsBody(BaseModel):
+    init_data: str
+    tg_id: int
+    target_tg_id: int
+    amount: int
+    note: str = ""
+
+
+class AdminBetBody(BaseModel):
+    init_data: str
+    tg_id: int
+    bet_id: int
+
+
+class AdminInventoryUpdateBody(BaseModel):
+    init_data: str
+    tg_id: int
+    inventory_id: int
+    status: str
+    nft_name: str = ""
+    nft_stars: int = 0
+    nft_msg_id: int = 0
+    nft_photo_url: str = ""
+
+
+class AdminUserEditBody(BaseModel):
+    init_data: str
+    tg_id: int
+    target_tg_id: int
+    cycle_spin: int = 0
+    winning_spin: int = 3
+    total_cycles: int = 0
+    stars_balance: int = 0
+
+
+class AdminNftTransferBody(BaseModel):
+    init_data: str
+    tg_id: int
+    inventory_id: int
+    winner_tg_id: int
+
+
+# ─── 1. Общая статистика ─────────────────────────────────
+
+@app.get("/admin/stats")
+async def admin_stats(init_data: str = "", tg_id: int = 0):
+    require_admin(init_data, tg_id)
+    try:
+        users_res  = supabase.table("users").select("tg_id", count="exact").execute()
+        bets_res   = supabase.table("bets").select("id", count="exact").execute()
+        wins_res   = supabase.table("bets").select("id", count="exact").eq("result", "win").execute()
+        inv_res    = supabase.table("inventory").select("id", count="exact").execute()
+        wait_res   = supabase.table("inventory").select("id", count="exact").eq("status", "waiting").execute()
+        manual_res = supabase.table("inventory").select("id", count="exact").eq("status", "manual").execute()
+        done_res   = supabase.table("inventory").select("id", count="exact").eq("status", "done").execute()
+        return {
+            "status": "ok",
+            "total_users":       users_res.count or 0,
+            "total_bets":        bets_res.count or 0,
+            "total_wins":        wins_res.count or 0,
+            "total_inventory":   inv_res.count or 0,
+            "inventory_waiting": wait_res.count or 0,
+            "inventory_manual":  manual_res.count or 0,
+            "inventory_done":    done_res.count or 0,
+        }
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
+# ─── 2. Список всех пользователей ────────────────────────
+
+@app.get("/admin/users")
+async def admin_users(init_data: str = "", tg_id: int = 0,
+                      limit: int = 50, offset: int = 0, search: str = ""):
+    require_admin(init_data, tg_id)
+    try:
+        q = supabase.table("users").select("*").order("created_at", desc=True)
+        if search:
+            q = q.or_(f"username.ilike.%{search}%,first_name.ilike.%{search}%")
+        res = q.range(offset, offset + limit - 1).execute()
+        return {"status": "ok", "users": res.data or [], "total": len(res.data or [])}
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
+# ─── 3. Карточка конкретного пользователя ────────────────
+
+@app.get("/admin/user/{target_tg_id}")
+async def admin_user_detail(target_tg_id: int, init_data: str = "", tg_id: int = 0):
+    require_admin(init_data, tg_id)
+    try:
+        user_res = supabase.table("users").select("*").eq("tg_id", target_tg_id).single().execute()
+        bets_res = supabase.table("bets").select("*").eq("tg_id", target_tg_id).order("created_at", desc=True).execute()
+        inv_res  = supabase.table("inventory").select("*").eq("tg_id", target_tg_id).order("created_at", desc=True).execute()
+        log_res  = supabase.table("audit_log").select("*").eq("tg_id", target_tg_id).order("created_at", desc=True).limit(50).execute()
+        return {
+            "status":    "ok",
+            "user":      user_res.data,
+            "bets":      bets_res.data or [],
+            "inventory": inv_res.data or [],
+            "audit_log": log_res.data or [],
+        }
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
+# ─── 4. Список инвентаря (все записи) ────────────────────
+
+@app.get("/admin/inventory")
+async def admin_inventory(init_data: str = "", tg_id: int = 0,
+                          status_filter: str = "", limit: int = 50, offset: int = 0):
+    require_admin(init_data, tg_id)
+    try:
+        q = supabase.table("inventory").select("*").order("created_at", desc=True)
+        if status_filter:
+            q = q.eq("status", status_filter)
+        res = q.range(offset, offset + limit - 1).execute()
+        return {"status": "ok", "inventory": res.data or []}
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
+# ─── 5. Обновить запись инвентаря вручную ────────────────
+
+@app.post("/admin/inventory/update")
+async def admin_inventory_update(body: AdminInventoryUpdateBody):
+    require_admin(body.init_data, body.tg_id)
+    try:
+        upd: dict = {"status": body.status}
+        if body.nft_name:      upd["nft_name"]     = body.nft_name
+        if body.nft_stars:     upd["nft_stars"]     = body.nft_stars
+        if body.nft_msg_id:    upd["nft_msg_id"]    = body.nft_msg_id
+        if body.nft_photo_url: upd["nft_photo_url"] = body.nft_photo_url
+        res = supabase.table("inventory").update(upd).eq("id", body.inventory_id).execute()
+        log_action(body.tg_id, "admin_inventory_update", {"inventory_id": body.inventory_id, "upd": upd})
+        return {"status": "ok", "updated": res.data}
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
+# ─── 6. Принудительная выдача NFT (transfer) ─────────────
+
+@app.post("/admin/inventory/transfer")
+async def admin_transfer_nft(body: AdminNftTransferBody):
+    require_admin(body.init_data, body.tg_id)
+    try:
+        inv_res = supabase.table("inventory").select("*").eq("id", body.inventory_id).single().execute()
+        inv = inv_res.data
+        if not inv:
+            raise HTTPException(404, "Запись инвентаря не найдена.")
+        nft_msg_id = inv.get("nft_msg_id")
+        if not nft_msg_id:
+            raise HTTPException(400, "nft_msg_id отсутствует — ручная покупка NFT.")
+        ok = await userbot_transfer_nft(body.winner_tg_id, nft_msg_id)
+        if ok:
+            supabase.table("inventory").update({"status": "done"}).eq("id", body.inventory_id).execute()
+            await tg_send_message(body.winner_tg_id, f"Твой NFT отправлен!\n\n{inv.get('nft_name', 'NFT')} ({inv.get('nft_stars', '?')}⭐)")
+            log_action(body.tg_id, "admin_transfer_nft", {"inventory_id": body.inventory_id, "winner": body.winner_tg_id})
+        return {"status": "ok", "transferred": ok}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
+# ─── 7. Все ставки ────────────────────────────────────────
+
+@app.get("/admin/bets")
+async def admin_bets(init_data: str = "", tg_id: int = 0,
+                     status_filter: str = "", limit: int = 50, offset: int = 0):
+    require_admin(init_data, tg_id)
+    try:
+        q = supabase.table("bets").select("*").order("created_at", desc=True)
+        if status_filter:
+            q = q.eq("status", status_filter)
+        res = q.range(offset, offset + limit - 1).execute()
+        return {"status": "ok", "bets": res.data or []}
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
+# ─── 8. Отменить ставку ───────────────────────────────────
+
+@app.post("/admin/bet/cancel")
+async def admin_cancel_bet(body: AdminBetBody):
+    require_admin(body.init_data, body.tg_id)
+    try:
+        res = supabase.table("bets").update({"status": "expired"}).eq("id", body.bet_id).execute()
+        log_action(body.tg_id, "admin_cancel_bet", {"bet_id": body.bet_id})
+        return {"status": "ok", "updated": res.data}
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
+# ─── 9. Сбросить ставку (paid → waiting_gifts) ────────────
+
+@app.post("/admin/bet/reset")
+async def admin_reset_bet(body: AdminBetBody):
+    require_admin(body.init_data, body.tg_id)
+    try:
+        res = supabase.table("bets").update({"status": "waiting_gifts", "used_at": None}).eq("id", body.bet_id).execute()
+        log_action(body.tg_id, "admin_reset_bet", {"bet_id": body.bet_id})
+        return {"status": "ok", "updated": res.data}
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
+# ─── 10. Добавить / снять звёзды пользователю ────────────
+
+@app.post("/admin/user/stars")
+async def admin_adjust_stars(body: AdminStarsBody):
+    require_admin(body.init_data, body.tg_id)
+    try:
+        user_res = supabase.table("users").select("stars_balance").eq("tg_id", body.target_tg_id).single().execute()
+        old = (user_res.data or {}).get("stars_balance") or 0
+        new_bal = max(0, old + body.amount)
+        supabase.table("users").update({"stars_balance": new_bal}).eq("tg_id", body.target_tg_id).execute()
+        log_action(body.tg_id, "admin_adjust_stars", {
+            "target": body.target_tg_id, "delta": body.amount,
+            "old": old, "new": new_bal, "note": body.note,
+        })
+        return {"status": "ok", "old_balance": old, "new_balance": new_bal}
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
+# ─── 11. Заблокировать пользователя ──────────────────────
+
+@app.post("/admin/user/ban")
+async def admin_ban_user(body: AdminBanBody):
+    require_admin(body.init_data, body.tg_id)
+    try:
+        supabase.table("users").update({"is_banned": True, "ban_reason": body.reason}).eq("tg_id", body.target_tg_id).execute()
+        log_action(body.tg_id, "admin_ban", {"target": body.target_tg_id, "reason": body.reason})
+        await tg_send_message(body.target_tg_id, "🚫 Твой аккаунт заблокирован. Обратись в поддержку.")
+        return {"status": "ok"}
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
+# ─── 12. Разблокировать пользователя ─────────────────────
+
+@app.post("/admin/user/unban")
+async def admin_unban_user(body: AdminUserActionBody):
+    require_admin(body.init_data, body.tg_id)
+    try:
+        supabase.table("users").update({"is_banned": False, "ban_reason": None}).eq("tg_id", body.target_tg_id).execute()
+        log_action(body.tg_id, "admin_unban", {"target": body.target_tg_id})
+        await tg_send_message(body.target_tg_id, "Твой аккаунт разблокирован. Удачи!")
+        return {"status": "ok"}
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
+# ─── 13. Редактировать цикл / баланс пользователя ────────
+
+@app.post("/admin/user/edit")
+async def admin_edit_user(body: AdminUserEditBody):
+    require_admin(body.init_data, body.tg_id)
+    try:
+        upd = {
+            "cycle_spin":    body.cycle_spin,
+            "winning_spin":  body.winning_spin,
+            "total_cycles":  body.total_cycles,
+            "stars_balance": body.stars_balance,
+        }
+        supabase.table("users").update(upd).eq("tg_id", body.target_tg_id).execute()
+        log_action(body.tg_id, "admin_edit_user", {"target": body.target_tg_id, **upd})
+        return {"status": "ok"}
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
+# ─── 14. Рассылка сообщения всем пользователям ───────────
+
+@app.post("/admin/broadcast")
+async def admin_broadcast(body: AdminBroadcastBody):
+    require_admin(body.init_data, body.tg_id)
+    try:
+        users_res = supabase.table("users").select("tg_id").execute()
+        tg_ids = [u["tg_id"] for u in (users_res.data or []) if u.get("tg_id")]
+        sent = 0
+        failed = 0
+        for uid in tg_ids:
+            try:
+                await tg_api("sendMessage", {
+                    "chat_id":    uid,
+                    "text":       body.text,
+                    "parse_mode": body.parse_mode,
+                })
+                sent += 1
+            except Exception:
+                failed += 1
+        log_action(body.tg_id, "admin_broadcast", {"sent": sent, "failed": failed, "total": len(tg_ids)})
+        return {"status": "ok", "sent": sent, "failed": failed, "total": len(tg_ids)}
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
+# ─── 15. Получить/обновить настройки (settings) ──────────
+
+@app.get("/admin/settings")
+async def admin_get_settings(init_data: str = "", tg_id: int = 0):
+    require_admin(init_data, tg_id)
+    try:
+        res = supabase.table("settings").select("*").execute()
+        return {"status": "ok", "settings": res.data or []}
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
+@app.post("/admin/settings/set")
+async def admin_set_setting(body: AdminSetSettingBody):
+    require_admin(body.init_data, body.tg_id)
+    try:
+        existing = supabase.table("settings").select("key").eq("key", body.key).execute()
+        if existing.data:
+            supabase.table("settings").update({"value": body.value}).eq("key", body.key).execute()
+        else:
+            supabase.table("settings").insert({"key": body.key, "value": body.value}).execute()
+        log_action(body.tg_id, "admin_set_setting", {"key": body.key, "value": body.value})
+        return {"status": "ok", "key": body.key, "value": body.value}
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
+# ─── 16. Audit log (все записи) ──────────────────────────
+
+@app.get("/admin/audit-log")
+async def admin_audit_log(init_data: str = "", tg_id: int = 0,
+                          limit: int = 100, offset: int = 0, action_filter: str = ""):
+    require_admin(init_data, tg_id)
+    try:
+        q = supabase.table("audit_log").select("*").order("created_at", desc=True)
+        if action_filter:
+            q = q.eq("action", action_filter)
+        res = q.range(offset, offset + limit - 1).execute()
+        return {"status": "ok", "log": res.data or []}
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
+# ─── 17. Список ожидающих выдачи NFT ─────────────────────
+
+@app.get("/admin/inventory/pending")
+async def admin_pending_nft(init_data: str = "", tg_id: int = 0):
+    require_admin(init_data, tg_id)
+    try:
+        now = datetime.utcnow().isoformat()
+        res = (
+            supabase.table("inventory")
+            .select("*")
+            .in_("status", ["waiting", "manual"])
+            .lte("available_at", now)
+            .order("available_at")
+            .execute()
+        )
+        return {"status": "ok", "pending": res.data or [], "count": len(res.data or [])}
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
+# ─── 18. Реферальная статистика ───────────────────────────
+
+@app.get("/admin/referrals")
+async def admin_referrals(init_data: str = "", tg_id: int = 0, limit: int = 50):
+    require_admin(init_data, tg_id)
+    try:
+        res = (
+            supabase.table("users")
+            .select("tg_id, username, first_name, referral_count, stars_balance")
+            .gt("referral_count", 0)
+            .order("referral_count", desc=True)
+            .limit(limit)
+            .execute()
+        )
+        return {"status": "ok", "top_referrers": res.data or []}
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
+# ─── 19. Топ игроков по выигрышам ────────────────────────
+
+@app.get("/admin/top-winners")
+async def admin_top_winners(init_data: str = "", tg_id: int = 0, limit: int = 50):
+    require_admin(init_data, tg_id)
+    try:
+        res = (
+            supabase.table("users")
+            .select("tg_id, username, first_name, total_cycles, cycle_spin")
+            .order("total_cycles", desc=True)
+            .limit(limit)
+            .execute()
+        )
+        return {"status": "ok", "top_winners": res.data or []}
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
+# ─── 20. Отправить сообщение конкретному пользователю ────
+
+class AdminMessageBody(BaseModel):
+    init_data: str
+    tg_id: int
+    target_tg_id: int
+    text: str
+    parse_mode: str = "HTML"
+
+@app.post("/admin/user/message")
+async def admin_message_user(body: AdminMessageBody):
+    require_admin(body.init_data, body.tg_id)
+    try:
+        await tg_api("sendMessage", {
+            "chat_id":    body.target_tg_id,
+            "text":       body.text,
+            "parse_mode": body.parse_mode,
+        })
+        log_action(body.tg_id, "admin_message_user", {"target": body.target_tg_id, "text": body.text[:100]})
+        return {"status": "ok"}
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
+# ─── 21. Сбросить цикл пользователя ──────────────────────
+
+@app.post("/admin/user/reset-cycle")
+async def admin_reset_cycle(body: AdminUserActionBody):
+    require_admin(body.init_data, body.tg_id)
+    try:
+        supabase.table("users").update({
+            "cycle_spin":   0,
+            "winning_spin": 3,
+        }).eq("tg_id", body.target_tg_id).execute()
+        log_action(body.tg_id, "admin_reset_cycle", {"target": body.target_tg_id})
+        return {"status": "ok"}
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
+# ─── 22. Выдать бесплатный спин ──────────────────────────
+
+class AdminFreeSpinBody(BaseModel):
+    init_data: str
+    tg_id: int
+    target_tg_id: int
+
+@app.post("/admin/user/free-spin")
+async def admin_give_free_spin(body: AdminFreeSpinBody):
+    require_admin(body.init_data, body.tg_id)
+    try:
+        supabase.table("users").update({
+            "free_spin_at": None,  
+        }).eq("tg_id", body.target_tg_id).execute()
+        log_action(body.tg_id, "admin_give_free_spin", {"target": body.target_tg_id})
+        await tg_send_message(body.target_tg_id, "Тебе выдан бесплатный спин! Заходи в игру.")
+        return {"status": "ok"}
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
+# ─── 23. Список заблокированных пользователей ────────────
+
+@app.get("/admin/users/banned")
+async def admin_banned_users(init_data: str = "", tg_id: int = 0):
+    require_admin(init_data, tg_id)
+    try:
+        res = supabase.table("users").select("*").eq("is_banned", True).execute()
+        return {"status": "ok", "banned": res.data or [], "count": len(res.data or [])}
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
+# ─── 24. Поиск пользователя по username / tg_id ──────────
+
+@app.get("/admin/user/search")
+async def admin_search_user(init_data: str = "", tg_id: int = 0, q: str = ""):
+    require_admin(init_data, tg_id)
+    try:
+        try:
+            search_id = int(q)
+            res = supabase.table("users").select("*").eq("tg_id", search_id).execute()
+        except ValueError:
+            res = supabase.table("users").select("*").ilike("username", f"%{q}%").execute()
+        return {"status": "ok", "users": res.data or []}
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
+# ─── 25. Полная история ставок по bet_id ─────────────────
+
+@app.get("/admin/bet/{bet_id}")
+async def admin_bet_detail(bet_id: int, init_data: str = "", tg_id: int = 0):
+    require_admin(init_data, tg_id)
+    try:
+        bet_res  = supabase.table("bets").select("*").eq("id", bet_id).single().execute()
+        gift_res = supabase.table("received_gifts").select("*").eq("bet_id", bet_id).execute()
+        return {
+            "status": "ok",
+            "bet":    bet_res.data,
+            "gifts":  gift_res.data or [],
+        }
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
+# ─── 26. Изменить статус inventory вручную ───────────────
+
+class AdminInvStatusBody(BaseModel):
+    init_data: str
+    tg_id: int
+    inventory_id: int
+    new_status: str
+
+@app.post("/admin/inventory/status")
+async def admin_set_inv_status(body: AdminInvStatusBody):
+    require_admin(body.init_data, body.tg_id)
+    try:
+        res = supabase.table("inventory").update({"status": body.new_status}).eq("id", body.inventory_id).execute()
+        log_action(body.tg_id, "admin_inv_status", {"id": body.inventory_id, "status": body.new_status})
+        return {"status": "ok", "updated": res.data}
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
+# ─── 27. Активные ставки (paid, waiting_gifts) ───────────
+
+@app.get("/admin/bets/active")
+async def admin_active_bets(init_data: str = "", tg_id: int = 0):
+    require_admin(init_data, tg_id)
+    try:
+        res = (
+            supabase.table("bets")
+            .select("*")
+            .in_("status", ["paid", "waiting_gifts"])
+            .order("created_at", desc=True)
+            .execute()
+        )
+        return {"status": "ok", "bets": res.data or [], "count": len(res.data or [])}
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
+# ─── 28. Дашборд — активность за последние 7 дней ────────
+
+@app.get("/admin/dashboard")
+async def admin_dashboard(init_data: str = "", tg_id: int = 0):
+    require_admin(init_data, tg_id)
+    try:
+        week_ago = (datetime.utcnow() - timedelta(days=7)).isoformat()
+        new_users = supabase.table("users").select("tg_id", count="exact").gte("created_at", week_ago).execute()
+        new_bets  = supabase.table("bets").select("id", count="exact").gte("created_at", week_ago).execute()
+        new_wins  = supabase.table("bets").select("id", count="exact").eq("result", "win").gte("created_at", week_ago).execute()
+        new_inv   = supabase.table("inventory").select("id", count="exact").gte("created_at", week_ago).execute()
+        total_users = supabase.table("users").select("tg_id", count="exact").execute()
+        pending_nft = supabase.table("inventory").select("id", count="exact").in_("status", ["waiting", "manual"]).execute()
+        return {
+            "status": "ok",
+            "last_7_days": {
+                "new_users":  new_users.count or 0,
+                "new_bets":   new_bets.count or 0,
+                "new_wins":   new_wins.count or 0,
+                "new_inv":    new_inv.count or 0,
+            },
+            "totals": {
+                "total_users":  total_users.count or 0,
+                "pending_nft":  pending_nft.count or 0,
+            },
+            "gift_account":    GIFT_ACCOUNT_USERNAME,
+            "gift_account_id": GIFT_ACCOUNT_TG_ID,
+        }
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
+# ─── 29. Удалить пользователя (soft delete) ──────────────
+
+@app.post("/admin/user/delete")
+async def admin_delete_user(body: AdminUserActionBody):
+    require_admin(body.init_data, body.tg_id)
+    if body.target_tg_id in (ADMIN_TG_ID, OWNER_ID):
+        raise HTTPException(403, "Нельзя удалить администратора.")
+    try:
+        supabase.table("users").update({"is_banned": True, "ban_reason": "deleted_by_admin"}).eq("tg_id", body.target_tg_id).execute()
+        log_action(body.tg_id, "admin_delete_user", {"target": body.target_tg_id})
+        return {"status": "ok"}
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
+# ─── 30. Список полученных подарков (received_gifts) ─────
+
+@app.get("/admin/received-gifts")
+async def admin_received_gifts(init_data: str = "", tg_id: int = 0,
+                               limit: int = 50, offset: int = 0):
+    require_admin(init_data, tg_id)
+    try:
+        res = (
+            supabase.table("received_gifts")
+            .select("*")
+            .order("created_at", desc=True)
+            .range(offset, offset + limit - 1)
+            .execute()
+        )
+        return {"status": "ok", "gifts": res.data or []}
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
+# ─── 31. Проверить баланс звёзд юзербота ─────────────────
+
+@app.get("/admin/userbot/balance")
+async def admin_userbot_balance(init_data: str = "", tg_id: int = 0):
+    require_admin(init_data, tg_id)
+    try:
+        client = await get_userbot()
+        if not client:
+            return {"status": "error", "balance": None, "error": "userbot unavailable"}
+        from pyrogram.raw import functions as rawfn
+        result = await client.invoke(rawfn.payments.GetStarsStatus(peer=await client.resolve_peer("me")))
+        balance = getattr(result, "balance", None)
+        return {"status": "ok", "balance": balance, "gift_account": GIFT_ACCOUNT_USERNAME}
+    except Exception as e:
+        return {"status": "error", "balance": None, "error": str(e)}
+
+
+# ─── 32. Принудительный cron (доставка вручную) ──────────
+
+@app.post("/admin/cron/run")
+async def admin_run_cron(body: AdminActionBody):
+    require_admin(body.init_data, body.tg_id)
+    try:
+        result = await cron_deliver.__wrapped__() if hasattr(cron_deliver, "__wrapped__") else None
+        log_action(body.tg_id, "admin_run_cron", {})
+        return {"status": "ok", "message": "Cron запущен вручную — смотри логи."}
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
+
+
+# ─── 33. Изменить аккаунт для получения подарков ─────────
+
+class AdminGiftAccountBody(BaseModel):
+    init_data: str
+    tg_id: int
+    username: str
+
+@app.post("/admin/settings/gift-account")
+async def admin_set_gift_account(body: AdminGiftAccountBody):
+    require_admin(body.init_data, body.tg_id)
+    try:
+        username = body.username if body.username.startswith("@") else "@" + body.username
+        existing = supabase.table("settings").select("key").eq("key", "ring_account").execute()
+        if existing.data:
+            supabase.table("settings").update({"value": username}).eq("key", "ring_account").execute()
+        else:
+            supabase.table("settings").insert({"key": "ring_account", "value": username}).execute()
+        log_action(body.tg_id, "admin_set_gift_account", {"username": username})
+        return {"status": "ok", "ring_account": username}
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
+# ─── 34. Статистика по выигрышным спинам (аналитика) ─────
+
+@app.get("/admin/analytics/spins")
+async def admin_spin_analytics(init_data: str = "", tg_id: int = 0):
+    require_admin(init_data, tg_id)
+    try:
+        wins_3 = supabase.table("bets").select("id", count="exact").eq("result", "win").eq("spin_number", 3).execute()
+        wins_4 = supabase.table("bets").select("id", count="exact").eq("result", "win").eq("spin_number", 4).execute()
+        wins_5 = supabase.table("bets").select("id", count="exact").eq("result", "win").eq("spin_number", 5).execute()
+        total  = supabase.table("bets").select("id", count="exact").execute()
+        wins   = supabase.table("bets").select("id", count="exact").eq("result", "win").execute()
+        return {
+            "status": "ok",
+            "total_bets": total.count or 0,
+            "total_wins": wins.count or 0,
+            "wins_on_spin_3": wins_3.count or 0,
+            "wins_on_spin_4": wins_4.count or 0,
+            "wins_on_spin_5": wins_5.count or 0,
+        }
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
+# ─── 35. Экспорт пользователей (CSV-формат JSON) ─────────
+
+@app.get("/admin/export/users")
+async def admin_export_users(init_data: str = "", tg_id: int = 0):
+    require_admin(init_data, tg_id)
+    try:
+        res = supabase.table("users").select("tg_id,username,first_name,total_cycles,cycle_spin,stars_balance,referral_count,created_at,is_banned").execute()
+        return {"status": "ok", "data": res.data or [], "count": len(res.data or [])}
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
+# ─── 36. Проверка здоровья всех компонентов ──────────────
+
+@app.get("/admin/system/health")
+async def admin_system_health(init_data: str = "", tg_id: int = 0):
+    require_admin(init_data, tg_id)
+    results = {}
+    try:
+        supabase.table("users").select("tg_id").limit(1).execute()
+        results["supabase"] = "ok"
+    except Exception as e:
+        results["supabase"] = f"error: {e}"
+    try:
+        bot_info = await tg_api("getMe", {})
+        results["telegram_bot"] = f"ok (@{bot_info.get('result', {}).get('username', '?')})"
+    except Exception as e:
+        results["telegram_bot"] = f"error: {e}"
+    try:
+        client = await get_userbot()
+        results["userbot"] = "ok" if client else "unavailable"
+    except Exception as e:
+        results["userbot"] = f"error: {e}"
+    results["gift_account"] = GIFT_ACCOUNT_USERNAME
+    results["gift_account_id"] = GIFT_ACCOUNT_TG_ID
+    return {"status": "ok", "components": results}
 
 
 # ─── LEADERBOARD ─────────────────────────────────────────
