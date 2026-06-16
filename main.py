@@ -207,6 +207,18 @@ def require_valid_init_data(init_data: str, claimed_tg_id: int) -> int:
         raise HTTPException(403, "tg_id не передан")
     return int(claimed_tg_id)
 
+
+def check_not_banned(tg_id: int):
+    """Проверяет что пользователь не забанен. Вызывать после require_valid_init_data."""    try:
+        res = supabase.table("users").select("is_banned, ban_reason").eq("tg_id", tg_id).single().execute()
+        if res.data and res.data.get("is_banned"):
+            reason = res.data.get("ban_reason") or "нарушение правил"
+            raise HTTPException(403, f"Аккаунт заблокирован: {reason}")
+    except HTTPException:
+        raise
+    except Exception:
+        pass  # если не смогли проверить — не блокируем
+
 # ══════════════════════════════════════════════════════════
 # 6. PYDANTIC МОДЕЛИ
 # ══════════════════════════════════════════════════════════
@@ -1195,6 +1207,9 @@ async def register(body: RegisterBody, request: Request):
         )
         if existing.data:
             user_row = existing.data[0]
+            if user_row.get("is_banned"):
+                reason = user_row.get("ban_reason") or "нарушение правил"
+                raise HTTPException(403, f"Аккаунт заблокирован: {reason}")
             # Обновляем каждый раз при входе — IP мог смениться
             supabase.table("users").update({
                 "ip_address":   ip,
@@ -1268,6 +1283,8 @@ async def create_bet(body: CreateBetBody):
 
     if not check_rate_limit(trusted_tg_id, "create_bet", max_per_hour=10):
         raise HTTPException(429, "Слишком много запросов.")
+
+    check_not_banned(trusted_tg_id)
 
     # Проверяем, что пользователь зарегистрирован
     try:
@@ -1420,6 +1437,8 @@ async def spin(body: SpinBody, background_tasks: BackgroundTasks):
 
     if not check_rate_limit(trusted_tg_id, "spin", max_per_hour=15):
         raise HTTPException(429, "Слишком много запросов.")
+
+    check_not_banned(trusted_tg_id)
 
     # Загружаем ставку
     try:
