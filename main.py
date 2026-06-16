@@ -1083,38 +1083,33 @@ async def process_win_automation(
 # Количество звёзд, которые получает реферер за каждого приглашённого
 REFERRAL_STARS_REWARD = 5
 
-def _apply_referral(new_user_tg_id: int, referrer_id: int):
+async def _apply_referral(new_user_tg_id: int, referrer_id: int):
     """
     Записывает реферальную связь: new_user_tg_id пришёл по ссылке referrer_id.
     Начисляет REFERRAL_STARS_REWARD звёзд рефереру в stars_balance.
     Безопасно вызывать несколько раз — повторная запись не случится.
+    Защита от race condition: атомарный UPDATE только если referred_by IS NULL.
     """
     try:
-        # ── Шаг 1: Явно читаем текущее состояние нового пользователя ──────────
-        # Supabase UPDATE с .is_("referred_by", "null") иногда возвращает пустой
-        # .data даже при успешном UPDATE (если RLS или return=minimal). Поэтому
-        # не полагаемся на upd.data — сначала читаем, потом решаем.
-        new_user_res = (
+        if referrer_id == new_user_tg_id:
+            return
+
+        # ── Шаг 1: Атомарно записываем referred_by только если ещё не стоит ──
+        # Фильтр .is_("referred_by", "null") гарантирует что при race condition
+        # только один запрос выиграет — второй не найдёт строки и вернёт пустой data.
+        upd = (
             supabase.table("users")
-            .select("referred_by")
+            .update({"referred_by": referrer_id})
             .eq("tg_id", new_user_tg_id)
+            .is_("referred_by", "null")
             .execute()
         )
-        if not new_user_res.data:
-            log.warning(f"_apply_referral: user {new_user_tg_id} not found in db")
+        if not upd.data:
+            # либо пользователь не найден, либо referred_by уже стоит — оба случая норма
+            log.info(f"_apply_referral: {new_user_tg_id} already referred or not found, skip")
             return
 
-        current_referrer = new_user_res.data[0].get("referred_by")
-        if current_referrer is not None:
-            log.info(f"_apply_referral: {new_user_tg_id} already has referrer={current_referrer}, skip")
-            return
-
-        # ── Шаг 2: Записываем referred_by ────────────────────────────────────
-        supabase.table("users").update({
-            "referred_by": referrer_id
-        }).eq("tg_id", new_user_tg_id).execute()
-
-        # ── Шаг 3: Начисляем звёзды рефереру ─────────────────────────────────
+        # ── Шаг 2: Начисляем звёзды рефереру ─────────────────────────────────
         ref_res = (
             supabase.table("users")
             .select("referral_count, stars_balance")
@@ -1217,7 +1212,7 @@ async def register(body: RegisterBody, request: Request):
             if body.referrer_id and body.referrer_id != trusted_tg_id:
                 if not user_row.get("referred_by"):
                     log.info(f"register: existing user {trusted_tg_id} re-entering with referrer_id={body.referrer_id}, applying referral")
-                    _apply_referral(trusted_tg_id, body.referrer_id)
+                    await _apply_referral(trusted_tg_id, body.referrer_id)
                 else:
                     log.info(f"register: existing user {trusted_tg_id} already has referrer={user_row.get('referred_by')}, skip")
 
@@ -1244,7 +1239,7 @@ async def register(body: RegisterBody, request: Request):
 
         # Применяем реферал сразу при новой регистрации
         if body.referrer_id and body.referrer_id != trusted_tg_id:
-            _apply_referral(trusted_tg_id, body.referrer_id)
+            await _apply_referral(trusted_tg_id, body.referrer_id)
 
         log_action(trusted_tg_id, "register", {
             "ip": ip, "country": geo.get("country"), "city": geo.get("city"),
@@ -2782,14 +2777,21 @@ async def webhook(
             try:
                 referrer_id_from_param = int(ref_param[len("inviteCode"):])
                 if referrer_id_from_param != tg_id:
-                    _apply_referral(tg_id, referrer_id_from_param)
+                    # Применяем реферал только если пользователь уже зарегистрирован.
+                    # Если нет — реферал применится при вызове /register с фронта.
+                    user_check = supabase.table("users").select("tg_id").eq("tg_id", tg_id).execute()
+                    if user_check.data:
+                        await _apply_referral(tg_id, referrer_id_from_param)
             except Exception as e:
                 log.warning(f"webhook inviteCode ref error: {e}")
         elif tg_id and ref_param.startswith("ref_"):
             try:
                 referrer_id_from_param = int(ref_param[4:])
                 if referrer_id_from_param != tg_id:
-                    _apply_referral(tg_id, referrer_id_from_param)
+                    # Применяем реферал только если пользователь уже зарегистрирован.
+                    user_check = supabase.table("users").select("tg_id").eq("tg_id", tg_id).execute()
+                    if user_check.data:
+                        await _apply_referral(tg_id, referrer_id_from_param)
             except Exception as e:
                 log.warning(f"webhook ref error: {e}")
 
