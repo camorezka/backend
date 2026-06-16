@@ -209,7 +209,8 @@ def require_valid_init_data(init_data: str, claimed_tg_id: int) -> int:
 
 
 def check_not_banned(tg_id: int):
-    """Проверяет что пользователь не забанен. Вызывать после require_valid_init_data."""    try:
+    """Проверяет что пользователь не забанен. Вызывать после require_valid_init_data."""
+    try:
         res = supabase.table("users").select("is_banned, ban_reason").eq("tg_id", tg_id).single().execute()
         if res.data and res.data.get("is_banned"):
             reason = res.data.get("ban_reason") or "нарушение правил"
