@@ -2905,7 +2905,7 @@ async def webhook(
         import json as _json
 
         if cb_sender != OWNER_ID:
-            await _answer_cb(cb_id, "⛔ Нет доступа", alert=True)
+            await _answer_cb(cb_id)
             return {"ok": True}
 
         if not cb_data.startswith("adm:"):
@@ -3158,7 +3158,6 @@ async def webhook(
     if msg_text.strip().split("@")[0] == "/admin":
         sender_id = message.get("from", {}).get("id")
         if sender_id != OWNER_ID:
-            await tg_api("sendMessage", {"chat_id": sender_id, "text": "⛔ Нет доступа."})
             return {"ok": True}
         await _send_admin_main(OWNER_ID)
         return {"ok": True}
